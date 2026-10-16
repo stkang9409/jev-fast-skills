@@ -7,8 +7,8 @@
     {
       "name": "jev-fast-skills",
       "source": "./",
-      "description": "TypeSafe Jev 4 Core Fast Skills (fast-context, fast-memory, fast-browser, prompt-engineer)",
-      "version": "1.0.0"
+      "description": "TypeSafe Jev Core Fast Skills (fast-browser, prompt-engineer) + POSIX SharedMemory Engine",
+      "version": "1.2.0"
     }
   ]
 }

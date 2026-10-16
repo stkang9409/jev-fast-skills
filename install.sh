@@ -37,19 +37,16 @@ fi
 
 # 3. Clean up any legacy loose symlinks in Antigravity (~/.gemini/config/skills) so plugin owns them without duplication
 rm -f "$AGY_SKILLS_DIR/fast-context" "$AGY_SKILLS_DIR/fast-memory" "$AGY_SKILLS_DIR/fast-browser" "$AGY_SKILLS_DIR/prompt-engineer"
-rm -f "$CLAUDE_SKILLS_DIR/fast-memory"
+rm -f "$CLAUDE_SKILLS_DIR/fast-context" "$CLAUDE_SKILLS_DIR/fc-hint.sh" "$CLAUDE_SKILLS_DIR/fast-memory"
 cp "$AGY_PLUGIN_DIR/hooks.json" "$HOME/.gemini/config/hooks.json"
 
 # 4. Link skills & rules for Claude Code (~/.claude/skills & ~/.claude/plugins)
 mkdir -p "$CLAUDE_SKILLS_DIR" "$HOME/.claude/plugins"
 ln -sfn "$AGY_PLUGIN_DIR" "$CLAUDE_PLUGIN_DIR"
-rm -f "$AGY_SKILLS_DIR/fast-memory" "$CLAUDE_SKILLS_DIR/fast-memory"
-for skill in fast-context fast-browser prompt-engineer; do
+for skill in fast-browser prompt-engineer; do
   ln -sfn "$AGY_PLUGIN_DIR/skills/$skill" "$CLAUDE_SKILLS_DIR/$skill"
 done
-if [ ! -f "$HOME/.claude/CLAUDE.md" ]; then
-  cp "$AGY_PLUGIN_DIR/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
-fi
+ln -sfn "$AGY_PLUGIN_DIR/rules/AGENTS.md" "$HOME/.claude/CLAUDE.md"
 
 # 5. Check TYPESAFE_API_KEY in ~/.gemini/.env
 mkdir -p "$HOME/.gemini"
@@ -62,8 +59,7 @@ if [ ! -f "$HOME/.gemini/.env" ] || ! grep -q "TYPESAFE_API_KEY=" "$HOME/.gemini
   fi
 fi
 
-ln -sfn "$PLUGIN_DIR/skills/fast-context/scripts/fc-hint.sh" "$HOME/.claude/skills/fc-hint.sh"
 echo "✅ Installation complete!"
 echo "   - Antigravity Plugin : $AGY_PLUGIN_DIR"
-echo "   - Claude Code Skills : $CLAUDE_SKILLS_DIR/{fast-context,fast-browser,prompt-engineer}"
+echo "   - Claude Code Skills : $CLAUDE_SKILLS_DIR/{fast-browser,prompt-engineer}"
 echo "   - Python Interpreter : $AGY_PLUGIN_DIR/.venv/bin/python"
