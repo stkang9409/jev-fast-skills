@@ -6,15 +6,15 @@
 
 <priority_hierarchy>
 규칙 간 경합이 발생할 경우 반드시 다음 우선순위를 따릅니다:
-1순위 (정확성 및 무결성): 사실 근거 확인, 테스트 검증, 작업 트리(Worktree) 청결 유지를 최우선으로 보장하며 근거 없는 추측(Hallucination)을 배제합니다.
-2순위 (Zero-Turn 즉시 실행): 불필요한 라우팅·탐색 왕복 턴을 생략하고, 단일 파일 작업은 기본 도구로 즉시 처리하며 다중 파일 작업은 핵심 Fast 스킬을 Turn 1에 바로 호출합니다.
-3순위 (배치 처리 효율성): 2개 이상의 파일을 생성·수정하거나 반복 검증할 때는 개별 도구를 순차 호출하는 대신 단일 스크립트 배치 실행으로 묶어 처리합니다.
+1순위 (정확성 및 작업 트리 무결성): 사실 근거 확인, 테스트 검증, Git 작업 트리(Worktree) 청결 유지를 최우선으로 보장하며 근거 없는 추측(Hallucination)을 배제합니다.
+2순위 (문서 지도 및 직접 도구 우선): 저장소 내 아키텍처/매뉴얼 문서(`docs/`, `README.md`, `AGENTS.md`)가 있거나 단일 파일·정확한 심볼명을 이미 아는 경우 기본 도구(`view_file`, `grep`)로 즉시 확인합니다.
+3순위 (타겟팅된 Fast 스킬 및 배치 실행): 위치가 불분명한 다중 파일 탐색이나 반복 작업 시 하위 경로를 좁혀 Fast 스킬 또는 단일 배치 스크립트를 호출합니다.
 </priority_hierarchy>
 
 <rules>
-1. [Zero-Turn 라우팅 생략 및 직접 실행]: 일반 대화, 질의응답, 단일 파일 수정 시 별도의 라우터 스크립트를 호출하는 대신 Turn 1에 즉시 답변하거나 대상 파일을 직접 편집합니다.
-2. [다중 파일 코드 탐색 (`fast-context`)]: 2개 이상의 파일에 걸친 심볼 탐색·리팩토링·버그 추적이 필요할 때는 개별 파일을 하나씩 열어보는 대신 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-context/scripts/bundle_context.py "<TASK_INTENT>" --path <DIR>`를 실행하여 `.context/bundle.md`를 생성하고 `view_file`(최대 800라인)로 한 번에 파악합니다 (반복 실행 시 내장 POSIX RAM 캐시가 변경되지 않은 파일의 AST를 자동 재사용합니다).
-3. [비시각적 웹 탐색 및 핸드오프 (`fast-browser`)]: 화면 직접 확인이 불필요한 웹 검색·폼 입력 자동화는 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-browser/scripts/fast_browse.py --url "<URL>" --goal "<GOAL>" [--slots '{"k":"v"}']`로 실행하며, `"status": "NEED_TEXT"` 반환 시 내장 RAM에 보존된 세션을 `--resume --text "<TEXT>"`로 즉시 재개합니다.
+1. [Zero-Turn 직접 실행]: 일반 대화, 질의응답, 단일 파일 수정, 또는 이미 문서(`docs/manual/*` 등)에 파일 위치가 정리된 경우에는 불필요한 번들러 호출 대신 해당 문서나 대상 파일을 즉시 열람·편집합니다.
+2. [하위 경로 타겟팅 코드 탐색 (`fast-context`)]: 구조가 생소한 다중 파일의 심볼·IPC·호출 흐름을 파악해야 할 때는 루트(`.`) 전체 대신 관련 하위 디렉토리를 지정(`--path "dirA,dirB"`)하여 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-context/scripts/bundle_context.py "<TASK_INTENT>" --path "<SUBDIRS>"`를 실행하고, 작업 트리 외부에 생성된 `/tmp/fast-context/bundle.md`를 열람합니다.
+3. [비시각적 웹 탐색 및 핸드오프 (`fast-browser`)]: 화면 직접 확인이 불필요한 웹 검색·폼 입력 자동화는 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-browser/scripts/fast_browse.py --url "<URL>" --goal "<GOAL>" [--slots '{"k":"v"}']`로 실행하며, `"status": "NEED_TEXT"` 반환 시 내장 RAM 세션을 `--resume --text "<TEXT>"`로 재개합니다.
 4. [프롬프트 12대 기준 감사 (`prompt-engineer`)]: LLM 시스템 프롬프트나 스킬 지침을 작성·수정할 때는 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/prompt-engineer/scripts/audit_prompt.py --file <PATH> [--failed-case "<EXAMPLE>"]`를 실행하여 12대 품질 기준 통과 여부와 내장 RAM 기반 전후 점수 변화(`RAM Auto-Diff`)를 검증합니다.
 5. [다중 파일 배치 편집]: 2개 이상의 파일에 걸친 공통 코드 수정이나 반복 설정 변경은 개별 파일 편집 도구를 여러 번 호출하는 대신 `run_command`를 통한 단일 Python/Shell 스크립트로 일괄 처리합니다.
 6. [예외 및 엣지 케이스 처리 (Fallback)]:

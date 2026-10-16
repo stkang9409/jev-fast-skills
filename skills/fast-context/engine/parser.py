@@ -1,10 +1,10 @@
-"""AST and signature parser for code slicing with POSIX SharedMemory (RAM) AST caching."""
+"""AST and signature parser for Python, TS/JS/CJS (including Electron IPC), and Markdown docs."""
 
 import ast
 import re
 import sys
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 if str(PLUGIN_ROOT) not in sys.path:
@@ -66,13 +66,13 @@ class CodeBlock:
         )
 
 
-def parse_file(file_path: Path, max_lines_full: int = 50) -> List[CodeBlock]:
+def parse_file(file_path: Path, max_lines_full: int = 18) -> List[CodeBlock]:
     """Parse a source file into semantic symbols and code blocks (backed by RAM AST cache)."""
     if not file_path.is_file():
         return []
 
     abs_str = str(file_path.resolve())
-    cache_key = f"ctx:ast:{abs_str}"
+    cache_key = f"ctx:ast:v4:{abs_str}"
     try:
         st = file_path.stat()
         mtime_ns = st.st_mtime_ns
@@ -119,8 +119,10 @@ def parse_file(file_path: Path, max_lines_full: int = 50) -> List[CodeBlock]:
         suffix = file_path.suffix.lower()
         if suffix == ".py":
             blocks = _parse_python(file_path, raw_text, lines)
-        elif suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs"}:
+        elif suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".cts", ".mts"}:
             blocks = _parse_js_ts(file_path, raw_text, lines)
+        elif suffix in {".md", ".mdx"}:
+            blocks = _parse_markdown(file_path, lines)
         else:
             blocks = _parse_generic(file_path, raw_text, lines)
 
@@ -211,40 +213,56 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
     return blocks
 
 
-def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 120) -> int:
-    """Find the closing line of a JS/TS block using brace/paren depth balancing."""
-    depth = 0
-    opened = False
+def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 85) -> int:
+    """Find the closing line of a JS/TS/CJS block (handling destructured params `({ ... }) {` properly)."""
+    brace_depth = 0
+    paren_depth = 0
+    body_opened = False
     limit = min(len(lines), start_line - 1 + max_span)
     for idx in range(start_line - 1, limit):
         line = lines[idx]
-        # Strip line comments for cleaner brace counting
         clean = re.sub(r"//.*$", "", line)
         for ch in clean:
-            if ch == "{":
-                depth += 1
-                opened = True
+            if ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                paren_depth = max(0, paren_depth - 1)
+            elif ch == "{":
+                brace_depth += 1
+                if paren_depth == 0:
+                    body_opened = True
             elif ch == "}":
-                depth -= 1
-                if opened and depth <= 0:
-                    return idx + 1
-        # Single-line type alias ending with semicolon without braces
-        if not opened and clean.rstrip().endswith(";") and idx >= start_line - 1:
+                brace_depth -= 1
+        if body_opened and brace_depth <= 0 and paren_depth == 0:
+            return idx + 1
+        if not body_opened and paren_depth == 0 and clean.rstrip().endswith(";") and idx >= start_line - 1:
             return idx + 1
     return min(len(lines), start_line + 45)
 
 
 def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeBlock]:
+    """Parse ESModule, TypeScript, CommonJS (.cjs), and Electron IPC/Preload symbols."""
     blocks = []
+    seen_starts = set()
+
+    # 1. Standard & CommonJS declarations: function, class, interface, type, const/let, exports.X
     decl_pattern = re.compile(
-        r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|interface|type|const|let)\s+([a-zA-Z0-9_$]+)",
+        r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|interface|type)\s+([a-zA-Z0-9_$]+)"
+        r"|^(?:export\s+)?(const|let)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[a-zA-Z0-9_$]+)\s*=>"
+        r"|^\s*(?:module\.)?exports\.([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?(?:function|\([^)]*\)\s*=>)"
+        r"|^  (?:async\s+)?([a-zA-Z0-9_$]+)\s*\([^)]*\)\s*\{",
         re.MULTILINE,
     )
 
     for match in decl_pattern.finditer(raw_text):
-        kw, name = match.group(1), match.group(2)
-        start_char = match.start()
-        start_line = raw_text[:start_char].count("\n") + 1
+        start_line = raw_text[:match.start()].count("\n") + 1
+        if start_line in seen_starts:
+            continue
+        kw = match.group(1) or match.group(3) or "function"
+        name = match.group(2) or match.group(4) or match.group(5) or match.group(6)
+        if not name or name in {"if", "for", "while", "switch", "catch", "return"}:
+            continue
+        seen_starts.add(start_line)
         end_line = _find_brace_end_line(lines, start_line)
         content = "".join(lines[start_line - 1 : end_line])
         kind = "class" if kw == "class" else ("type" if kw in {"interface", "type"} else "function")
@@ -261,8 +279,67 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
             )
         )
 
+    # 2. Electron IPC channels (ipcMain.handle/on, ipcRenderer.invoke/send, contextBridge.exposeInMainWorld)
+    ipc_pattern = re.compile(
+        r"(ipcMain\.(?:handle|on)|handleIpc|ipcRenderer\.(?:invoke|send)|contextBridge\.exposeInMainWorld)\s*\(\s*['\"]([^'\"]+)['\"]",
+        re.MULTILINE,
+    )
+    for match in ipc_pattern.finditer(raw_text):
+        start_line = raw_text[:match.start()].count("\n") + 1
+        if start_line in seen_starts:
+            continue
+        seen_starts.add(start_line)
+        api_call, channel = match.group(1), match.group(2)
+        end_line = _find_brace_end_line(lines, start_line, max_span=50)
+        content = "".join(lines[start_line - 1 : end_line])
+        sym_name = f"{api_call}('{channel}')"
+        blocks.append(
+            CodeBlock(
+                file_path=file_path,
+                name=sym_name,
+                kind="ipc",
+                start_line=start_line,
+                end_line=end_line,
+                signature=sym_name,
+                content=content,
+                summary=content.strip()[:120].replace("\n", " "),
+            )
+        )
+
+    blocks.sort(key=lambda b: b.start_line)
     if not blocks:
         return _parse_generic(file_path, raw_text, lines)
+    return blocks
+
+
+def _parse_markdown(file_path: Path, lines: List[str]) -> List[CodeBlock]:
+    """Parse Markdown manuals/docs by heading sections (#, ##, ###) instead of blind 50-line chunks."""
+    blocks = []
+    heading_indices = []
+    for idx, line in enumerate(lines):
+        m = re.match(r"^(#{1,3})\s+(.+)", line.strip())
+        if m:
+            heading_indices.append((idx + 1, m.group(2).strip()))
+
+    if not heading_indices:
+        return _parse_generic(file_path, "".join(lines), lines)
+
+    for i, (start_line, title) in enumerate(heading_indices):
+        next_start = heading_indices[i + 1][0] - 1 if i + 1 < len(heading_indices) else len(lines)
+        end_line = min(next_start, start_line + 65)
+        content = "".join(lines[start_line - 1 : end_line])
+        blocks.append(
+            CodeBlock(
+                file_path=file_path,
+                name=f"doc:{title[:45]}",
+                kind="doc_section",
+                start_line=start_line,
+                end_line=end_line,
+                signature=f"Section: {title[:60]}",
+                content=content,
+                summary=content.strip()[:130].replace("\n", " "),
+            )
+        )
     return blocks
 
 

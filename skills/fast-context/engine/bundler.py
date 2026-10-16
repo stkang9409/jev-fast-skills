@@ -13,8 +13,8 @@ def build_bundle(
     base_dir: Path,
     total_files_scanned: int,
     elapsed_ms: int,
-    compact_stdout: bool = False,
-    max_stdout_chars: int = 7000,
+    compact_stdout: bool = True,
+    max_stdout_chars: int = 24000,
 ) -> str:
     """Format filtered code blocks into a single consolidated Repomix-style Markdown document.
     When compact_stdout=True, budgets total output to <= max_stdout_chars so Antigravity's
@@ -97,7 +97,7 @@ def build_bundle(
         suffix = first_block.file_path.suffix.lstrip(".") or "text"
         if suffix in {"py", "pyw"}:
             lang = "python"
-        elif suffix in {"js", "jsx", "ts", "tsx", "mjs"}:
+        elif suffix in {"js", "jsx", "ts", "tsx", "mjs", "cjs", "cts", "mts"}:
             lang = "typescript" if "ts" in suffix else "javascript"
         elif suffix in {"json", "yaml", "yml", "sh", "bash", "html", "css", "md"}:
             lang = suffix
