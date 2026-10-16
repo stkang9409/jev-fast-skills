@@ -35,15 +35,10 @@ if [ ! -x "$AGY_PLUGIN_DIR/.venv/bin/python" ]; then
   "$AGY_PLUGIN_DIR/.venv/bin/playwright" install chromium || true
 fi
 
-# 3. Link skills for Antigravity (~/.gemini/config/skills) & Global Rule (~/.gemini/GEMINI.md)
-rm -f "$AGY_SKILLS_DIR/fast-memory" "$CLAUDE_SKILLS_DIR/fast-memory"
-for skill in fast-context fast-browser prompt-engineer; do
-  ln -sfn "$AGY_PLUGIN_DIR/skills/$skill" "$AGY_SKILLS_DIR/$skill"
-done
+# 3. Clean up any legacy loose symlinks in Antigravity (~/.gemini/config/skills) so plugin owns them without duplication
+rm -f "$AGY_SKILLS_DIR/fast-context" "$AGY_SKILLS_DIR/fast-memory" "$AGY_SKILLS_DIR/fast-browser" "$AGY_SKILLS_DIR/prompt-engineer"
+rm -f "$CLAUDE_SKILLS_DIR/fast-memory"
 cp "$AGY_PLUGIN_DIR/hooks.json" "$HOME/.gemini/config/hooks.json"
-if [ ! -f "$HOME/.gemini/GEMINI.md" ]; then
-  cp "$AGY_PLUGIN_DIR/rules/AGENTS.md" "$HOME/.gemini/GEMINI.md"
-fi
 
 # 4. Link skills & rules for Claude Code (~/.claude/skills & ~/.claude/plugins)
 mkdir -p "$CLAUDE_SKILLS_DIR" "$HOME/.claude/plugins"
