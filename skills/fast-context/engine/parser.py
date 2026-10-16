@@ -1,9 +1,22 @@
-"""AST and signature parser for code slicing."""
+"""AST and signature parser for code slicing with POSIX SharedMemory (RAM) AST caching."""
 
 import ast
 import re
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+try:
+    from core.shm import RequestMemory
+    _SHM = RequestMemory()
+except Exception:
+    _SHM = None
+
+CACHE_STATS = {"hits": 0, "misses": 0}
 
 
 class CodeBlock:
@@ -35,14 +48,49 @@ class CodeBlock:
             "start_line": self.start_line,
             "end_line": self.end_line,
             "signature": self.signature,
+            "content": self.content,
             "summary": self.summary,
         }
 
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "CodeBlock":
+        return cls(
+            file_path=Path(d["file"]),
+            name=d["name"],
+            kind=d["kind"],
+            start_line=int(d["start_line"]),
+            end_line=int(d["end_line"]),
+            signature=d["signature"],
+            content=d.get("content", ""),
+            summary=d.get("summary", ""),
+        )
+
 
 def parse_file(file_path: Path, max_lines_full: int = 50) -> List[CodeBlock]:
-    """Parse a source file into semantic symbols and code blocks."""
+    """Parse a source file into semantic symbols and code blocks (backed by RAM AST cache)."""
     if not file_path.is_file():
         return []
+
+    abs_str = str(file_path.resolve())
+    cache_key = f"ctx:ast:{abs_str}"
+    try:
+        st = file_path.stat()
+        mtime_ns = st.st_mtime_ns
+        fsize = st.st_size
+    except Exception:
+        mtime_ns, fsize = 0, 0
+
+    if _SHM is not None and mtime_ns > 0:
+        cached = _SHM.get(cache_key)
+        if (
+            isinstance(cached, dict)
+            and cached.get("mtime_ns") == mtime_ns
+            and cached.get("size") == fsize
+        ):
+            CACHE_STATS["hits"] += 1
+            return [CodeBlock.from_dict(b) for b in cached.get("blocks", [])]
+
+    CACHE_STATS["misses"] += 1
 
     try:
         raw_text = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -51,13 +99,11 @@ def parse_file(file_path: Path, max_lines_full: int = 50) -> List[CodeBlock]:
 
     lines = raw_text.splitlines(keepends=True)
     total_lines = len(lines)
-
     if total_lines == 0:
         return []
 
-    # Small files: take the entire file as a single coherent block
     if total_lines <= max_lines_full:
-        return [
+        blocks = [
             CodeBlock(
                 file_path=file_path,
                 name="full_file",
@@ -69,14 +115,29 @@ def parse_file(file_path: Path, max_lines_full: int = 50) -> List[CodeBlock]:
                 summary=raw_text.strip()[:150].replace("\n", " "),
             )
         ]
-
-    suffix = file_path.suffix.lower()
-    if suffix == ".py":
-        return _parse_python(file_path, raw_text, lines)
-    elif suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs"}:
-        return _parse_js_ts(file_path, raw_text, lines)
     else:
-        return _parse_generic(file_path, raw_text, lines)
+        suffix = file_path.suffix.lower()
+        if suffix == ".py":
+            blocks = _parse_python(file_path, raw_text, lines)
+        elif suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs"}:
+            blocks = _parse_js_ts(file_path, raw_text, lines)
+        else:
+            blocks = _parse_generic(file_path, raw_text, lines)
+
+    if _SHM is not None and mtime_ns > 0 and blocks:
+        try:
+            _SHM.set(
+                cache_key,
+                {
+                    "mtime_ns": mtime_ns,
+                    "size": fsize,
+                    "blocks": [b.to_dict() for b in blocks],
+                },
+            )
+        except Exception:
+            pass
+
+    return blocks
 
 
 def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeBlock]:
@@ -86,7 +147,6 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
         return _parse_generic(file_path, raw_text, lines)
 
     blocks = []
-
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             s_line = node.lineno
@@ -110,8 +170,6 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
             c_s_line = node.lineno
             c_e_line = node.end_lineno or c_s_line
             c_doc = ast.get_docstring(node) or ""
-            
-            # Add methods
             method_found = False
             for sub in node.body:
                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -133,8 +191,6 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
                             summary=m_doc.strip()[:120] if m_doc else m_content.strip()[:100].replace("\n", " "),
                         )
                     )
-            
-            # If class has no methods or is short, keep class itself
             if not method_found or (c_e_line - c_s_line) < 40:
                 c_content = "".join(lines[c_s_line - 1 : c_e_line])
                 blocks.append(
@@ -155,29 +211,51 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
     return blocks
 
 
+def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 120) -> int:
+    """Find the closing line of a JS/TS block using brace/paren depth balancing."""
+    depth = 0
+    opened = False
+    limit = min(len(lines), start_line - 1 + max_span)
+    for idx in range(start_line - 1, limit):
+        line = lines[idx]
+        # Strip line comments for cleaner brace counting
+        clean = re.sub(r"//.*$", "", line)
+        for ch in clean:
+            if ch == "{":
+                depth += 1
+                opened = True
+            elif ch == "}":
+                depth -= 1
+                if opened and depth <= 0:
+                    return idx + 1
+        # Single-line type alias ending with semicolon without braces
+        if not opened and clean.rstrip().endswith(";") and idx >= start_line - 1:
+            return idx + 1
+    return min(len(lines), start_line + 45)
+
+
 def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeBlock]:
     blocks = []
-    func_pattern = re.compile(
-        r"^(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)\s*\(|^const\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|^class\s+([a-zA-Z0-9_$]+)",
+    decl_pattern = re.compile(
+        r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|interface|type|const|let)\s+([a-zA-Z0-9_$]+)",
         re.MULTILINE,
     )
 
-    for match in func_pattern.finditer(raw_text):
-        name = match.group(1) or match.group(2) or match.group(3)
+    for match in decl_pattern.finditer(raw_text):
+        kw, name = match.group(1), match.group(2)
         start_char = match.start()
         start_line = raw_text[:start_char].count("\n") + 1
-        
-        # Estimate end line (look for matching brackets or up to 60 lines)
-        end_line = min(len(lines), start_line + 40)
+        end_line = _find_brace_end_line(lines, start_line)
         content = "".join(lines[start_line - 1 : end_line])
+        kind = "class" if kw == "class" else ("type" if kw in {"interface", "type"} else "function")
         blocks.append(
             CodeBlock(
                 file_path=file_path,
                 name=name,
-                kind="function",
+                kind=kind,
                 start_line=start_line,
                 end_line=end_line,
-                signature=f"function {name}",
+                signature=f"{kw} {name}",
                 content=content,
                 summary=content.strip()[:120].replace("\n", " "),
             )
@@ -189,7 +267,6 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
 
 
 def _parse_generic(file_path: Path, raw_text: str, lines: List[str], chunk_size: int = 50) -> List[CodeBlock]:
-    """Chunk generic files into manageable 50-line sections."""
     blocks = []
     total = len(lines)
     for idx, i in enumerate(range(0, total, chunk_size)):

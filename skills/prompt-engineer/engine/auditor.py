@@ -3,8 +3,19 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+import hashlib
+import sys
 import httpx
 from dotenv import load_dotenv
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[3]
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+try:
+    from core.shm import RequestMemory
+    _SHM = RequestMemory()
+except Exception:
+    _SHM = None
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
 load_dotenv(dotenv_path=Path.home() / ".gemini" / ".env")
@@ -278,6 +289,7 @@ class PromptAuditor:
         failed_case: Optional[str] = None,
         task_goal: Optional[str] = None,
         pass_threshold: float = 0.55,
+        target_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Audits a prompt across 12 orthogonal prompt-engineering quality dimensions + per-rule checks
@@ -427,11 +439,39 @@ class PromptAuditor:
         passed_count = sum(1 for d in dimension_results if d["passed"])
         total_dims = len(dimension_results)
 
+        status_str = "PASS" if (passed_count >= 10 and not flagged_rules) else "NEEDS_REVISION"
+        ram_delta = None
+        if _SHM is not None:
+            shm_key = f"audit:prev:{target_key or 'inline'}"
+            prev = _SHM.get(shm_key)
+            current_failed_ids = [d["id"] for d in dimension_results if not d["passed"]]
+            if isinstance(prev, dict):
+                prev_failed = set(prev.get("failed_ids", []))
+                curr_failed = set(current_failed_ids)
+                ram_delta = {
+                    "prev_score": prev.get("health_score", 0),
+                    "score_diff": avg_score - prev.get("health_score", 0),
+                    "prev_passed": prev.get("passed_dimensions", ""),
+                    "prev_flagged_rules": prev.get("flagged_count", 0),
+                    "resolved_dimensions": sorted(list(prev_failed - curr_failed)),
+                    "regressed_dimensions": sorted(list(curr_failed - prev_failed)),
+                }
+            _SHM.set(
+                shm_key,
+                {
+                    "health_score": avg_score,
+                    "passed_dimensions": f"{passed_count}/{total_dims}",
+                    "failed_ids": current_failed_ids,
+                    "flagged_count": len(flagged_rules),
+                },
+            )
+
         return {
-            "status": "PASS" if (passed_count >= 10 and not flagged_rules) else "NEEDS_REVISION",
+            "status": status_str,
             "health_score": avg_score,
             "passed_dimensions": f"{passed_count}/{total_dims}",
             "latency_ms": elapsed_ms,
+            "ram_delta": ram_delta,
             "static_signals": static_signals,
             "dimensions": dimension_results,
             "mistakes_detected": mistakes_detected,

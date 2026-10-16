@@ -40,7 +40,8 @@ def main():
         return
 
     auditor = PromptAuditor()
-    result = auditor.audit(prompt_text, failed_case=args.failed_case, task_goal=args.goal)
+    target_key = os.path.abspath(args.file) if args.file else (args.goal or 'inline')
+    result = auditor.audit(prompt_text, failed_case=args.failed_case, task_goal=args.goal, target_key=target_key)
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -50,6 +51,16 @@ def main():
         f"=== Prompt Engineering 12-Criteria Audit [{result['status']}] "
         f"(Score: {result['health_score']}/100 | Passed: {result['passed_dimensions']} | {result['latency_ms']}ms) ==="
     )
+    if result.get("ram_delta"):
+        d = result["ram_delta"]
+        sign = "+" if d["score_diff"] >= 0 else ""
+        print(f"[RAM Auto-Diff] Score: {d['prev_score']} -> {result['health_score']} ({sign}{d['score_diff']}) | "
+              f"Passed: {d['prev_passed']} -> {result['passed_dimensions']} | "
+              f"Flagged Rules: {d['prev_flagged_rules']} -> {len(result['flagged_rules'])}")
+        if d["resolved_dimensions"]:
+            print(f"  -> Resolved ({len(d['resolved_dimensions'])}): {', '.join(d['resolved_dimensions'])}")
+        if d["regressed_dimensions"]:
+            print(f"  -> Regressed ({len(d['regressed_dimensions'])}): {', '.join(d['regressed_dimensions'])}")
     sig = result["static_signals"]
     print(
         f"[Static Signals] Lines: {sig['line_count']} | Rules: {sig['extracted_rule_count']} | "

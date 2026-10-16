@@ -1,8 +1,8 @@
 {
   "name": "jev-fast-skills",
   "displayName": "TypeSafe Jev Fast Skills",
-  "version": "1.0.0",
-  "description": "TypeSafe Jev 기반 4대 초고속 에이전트 스킬 번들: fast-context (1.3s 시맨틱 코드 번들러), fast-memory (0.3ms POSIX RAM 메모리), fast-browser (200ms 브라우저 자동화 및 핸드오프), prompt-engineer (220ms 12대 기준 프롬프트 감사).",
+  "version": "1.1.0",
+  "description": "TypeSafe Jev 기반 3대 초고속 에이전트 스킬 + 내장 POSIX 공유 메모리(RAM) 캐시 엔진: fast-context (1.3s 시맨틱 코드 번들러 & RAM AST 캐시), fast-browser (200ms 브라우저 자동화 & RAM 핸드오프), prompt-engineer (220ms 12대 기준 프롬프트 감사 & 자동 전후 비교).",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Use fast-context to bundle relevant symbols in this repository and summarize the architecture",

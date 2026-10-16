@@ -14,7 +14,7 @@ if str(SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT))
 
 from engine.scanner import get_repo_files, get_file_summaries
-from engine.parser import parse_file
+from engine.parser import parse_file, CACHE_STATS
 from engine.scorer import score_files, score_symbols
 from engine.bundler import build_bundle
 
@@ -150,7 +150,7 @@ def main():
     else:
         print(
             f"✅ [fast-context] Bundle created in {elapsed_ms}ms! "
-            f"({len(candidate_files)} scanned -> {len(scored_files)} files -> {len(scored_symbols)} blocks)"
+            f"({len(candidate_files)} scanned -> {len(scored_files)} files -> {len(scored_symbols)} blocks | RAM AST Cache: {CACHE_STATS['hits']} hits, {CACHE_STATS['misses']} parsed)"
         )
         print(f"📄 Saved to: {rel_out}")
         if bundle_alias_path:

@@ -36,7 +36,8 @@ if [ ! -x "$AGY_PLUGIN_DIR/.venv/bin/python" ]; then
 fi
 
 # 3. Link skills for Antigravity (~/.gemini/config/skills) & Global Rule (~/.gemini/GEMINI.md)
-for skill in fast-context fast-memory fast-browser prompt-engineer; do
+rm -f "$AGY_SKILLS_DIR/fast-memory" "$CLAUDE_SKILLS_DIR/fast-memory"
+for skill in fast-context fast-browser prompt-engineer; do
   ln -sfn "$AGY_PLUGIN_DIR/skills/$skill" "$AGY_SKILLS_DIR/$skill"
 done
 cp "$AGY_PLUGIN_DIR/hooks.json" "$HOME/.gemini/config/hooks.json"
@@ -47,7 +48,8 @@ fi
 # 4. Link skills & rules for Claude Code (~/.claude/skills & ~/.claude/plugins)
 mkdir -p "$CLAUDE_SKILLS_DIR" "$HOME/.claude/plugins"
 ln -sfn "$AGY_PLUGIN_DIR" "$CLAUDE_PLUGIN_DIR"
-for skill in fast-context fast-memory fast-browser prompt-engineer; do
+rm -f "$AGY_SKILLS_DIR/fast-memory" "$CLAUDE_SKILLS_DIR/fast-memory"
+for skill in fast-context fast-browser prompt-engineer; do
   ln -sfn "$AGY_PLUGIN_DIR/skills/$skill" "$CLAUDE_SKILLS_DIR/$skill"
 done
 if [ ! -f "$HOME/.claude/CLAUDE.md" ]; then
@@ -67,5 +69,5 @@ fi
 
 echo "✅ Installation complete!"
 echo "   - Antigravity Plugin : $AGY_PLUGIN_DIR"
-echo "   - Claude Code Skills : $CLAUDE_SKILLS_DIR/{fast-context,fast-memory,fast-browser,prompt-engineer}"
+echo "   - Claude Code Skills : $CLAUDE_SKILLS_DIR/{fast-context,fast-browser,prompt-engineer}"
 echo "   - Python Interpreter : $AGY_PLUGIN_DIR/.venv/bin/python"
