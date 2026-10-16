@@ -228,7 +228,7 @@ class PromptAuditor:
 
     @staticmethod
     def _scan_companion_code_overfitting(target_key: Optional[str]) -> List[str]:
-        """If auditing a SKILL.md file, scan sibling engine/*.py & scripts/*.py for hardcoded domain dictionaries or symbol blacklists."""
+        """If auditing a SKILL.md file, scan sibling engine/*.py & scripts/*.py for hardcoded domain dictionaries, symbol blacklists, or benchmark-specific strings."""
         if not target_key:
             return []
         p = Path(target_key)
@@ -237,8 +237,11 @@ class PromptAuditor:
         skill_dir = p.parent
         warnings: List[str] = []
         overfit_var_re = re.compile(
-            r"^\s*([A-Z][A-Z0-9_]*(?:SYNONYM|TRIVIAL|LOW_SIGNAL|BLACKLIST|SKIP_HEADING|HARDCODED)[A-Z0-9_]*)\s*[:=]",
+            r"^\s*([A-Za-z_][A-Za-z0-9_]*(?:SYNONYM|TRIVIAL|LOW_SIGNAL|BLACKLIST|SKIP_HEADING|HARDCODED|wants_auto|wants_cases)[A-Za-z0-9_]*)\s*[:=]",
             re.MULTILINE,
+        )
+        overfit_lit_re = re.compile(
+            r"['\"](?:auto-insurance|material-purchase|industrial-accident|formProfileId|hira-claim-core|MediOnEMR|/case-)['\"]"
         )
         for py_file in sorted(skill_dir.rglob("*.py")):
             try:
@@ -247,6 +250,8 @@ class PromptAuditor:
                 continue
             for m in overfit_var_re.finditer(code):
                 warnings.append(f"{py_file.relative_to(skill_dir)}:{m.group(1)}")
+            for m in overfit_lit_re.finditer(code):
+                warnings.append(f"{py_file.relative_to(skill_dir)}:{m.group(0)}")
         return warnings
 
     @staticmethod
@@ -340,8 +345,6 @@ class PromptAuditor:
         }
         if task_goal:
             state_payload["intended_task_goal"] = task_goal.strip()
-        if failed_case:
-            state_payload["failed_example_used_during_editing"] = failed_case.strip()
 
         questions: Dict[str, Dict[str, str]] = {}
         for spec in CRITERIA_SPECS:
@@ -351,11 +354,13 @@ class PromptAuditor:
             }
 
         if failed_case:
+            fc_snip = failed_case.strip()[:300]
             questions["no_failed_case_leak"] = {
                 "type": "noul",
                 "instructions": (
-                    "Does the [target_prompt] avoid copy-pasting literal words, numbers, or one-off phrases "
-                    "directly from [failed_example_used_during_editing] into its rules? (Yes = clean, No = leaked)"
+                    f"Is the [target_prompt] abstracted into universal principles rather than copy-pasting "
+                    f"specific test case entities, numbers, or verbatim benchmark sentences from this failed case: \"{fc_snip}\"? "
+                    f"(Yes = abstracted into general principles, No = verbatim test literals leaked)"
                 ),
             }
 

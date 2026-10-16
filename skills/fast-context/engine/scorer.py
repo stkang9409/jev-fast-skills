@@ -127,17 +127,17 @@ def score_files(
     return combined[:max_files]
 
 
-def _structural_priority(blk: CodeBlock, keywords: List[str], has_caller: bool = False) -> float:
+def _structural_priority(blk: CodeBlock, keywords: List[str], caller_count: int = 0) -> float:
     """
-    Domain-agnostic structural priority: prioritizes functions with callers and substantive
-    exported functions over tiny wrappers or types.
+    Domain-agnostic structural priority: prioritizes functions with callers, substantive
+    exported functions, and blocks whose name/summary/body match task intent keywords.
     """
     span = max(1, blk.end_line - blk.start_line + 1)
     is_exported = blk.signature.startswith("export ")
     prio = 0.0
-    if has_caller and span >= 8:
-        prio += 3.5
-    elif has_caller:
+    if caller_count > 0 and span >= 8:
+        prio += 3.0 + min(caller_count, 6) * 0.4
+    elif caller_count > 0:
         prio += 1.5
     if is_exported and span >= 8:
         prio += 3.0
@@ -153,11 +153,12 @@ def _structural_priority(blk: CodeBlock, keywords: List[str], has_caller: bool =
         prio -= 2.5
     s_low = blk.summary.lower()
     n_low = blk.name.lower()
+    c_low = blk.content.lower()
     for kw in keywords:
         if len(kw) >= 2 and kw in n_low:
-            prio += 2.0
-        elif kw in s_low:
-            prio += 1.0
+            prio += 2.2
+        elif len(kw) >= 2 and (kw in s_low or kw in c_low):
+            prio += 1.2
     return prio
 
 
@@ -187,7 +188,7 @@ def score_symbols(
     for blk in blocks:
         by_file.setdefault(str(blk.file_path), []).append(blk)
 
-    intra_file_called: Dict[Tuple[str, str], bool] = {}
+    intra_file_called: Dict[Tuple[str, str], int] = {}
     for f_key, f_blocks in by_file.items():
         if f_key.endswith(".md"):
             continue
@@ -195,10 +196,9 @@ def score_symbols(
             if b.kind not in {"function", "method", "class"} or len(b.name) < 5:
                 continue
             pat = re.compile(rf"\b{re.escape(b.name)}\s*\(")
-            for other in f_blocks:
-                if other.name != b.name and pat.search(other.content):
-                    intra_file_called[(f_key, b.name)] = True
-                    break
+            cnt = sum(1 for other in f_blocks if other.name != b.name and pat.search(other.content))
+            if cnt > 0:
+                intra_file_called[(f_key, b.name)] = cnt
 
     wants_types = any(w in task_intent.lower() for w in ("type", "interface", "schema", "타입", "인터페이스", "스키마"))
     candidates_for_jev: List[CodeBlock] = []
@@ -212,12 +212,12 @@ def score_symbols(
                 b for b in pool
                 if (b.end_line - b.start_line + 1) >= 7
                 or b.signature.startswith("export ")
-                or intra_file_called.get((f_key, b.name), False)
+                or intra_file_called.get((f_key, b.name), 0) > 0
             ]
             if not substantive:
                 substantive = pool
             substantive.sort(
-                key=lambda b: _structural_priority(b, keywords, intra_file_called.get((f_key, b.name), False)),
+                key=lambda b: _structural_priority(b, keywords, intra_file_called.get((f_key, b.name), 0)),
                 reverse=True,
             )
             candidates_for_jev.extend(substantive[:per_file_cap])
@@ -287,14 +287,14 @@ def score_symbols(
         def rank_key(item: Tuple[CodeBlock, float]):
             b, sc = item
             span = b.end_line - b.start_line + 1
-            has_c = intra_file_called.get((f_key, b.name), False)
+            c_cnt = intra_file_called.get((f_key, b.name), 0)
             is_exp = b.signature.startswith("export ") and b.kind in {"function", "method", "class"}
-            is_core_fn = (has_c or is_exp) and span >= 8
+            is_core_fn = (c_cnt > 0 or is_exp) and span >= 8
             passes = sc >= threshold or (is_core_fn and sc >= threshold - 0.15)
             return (
                 1 if passes else 0,
                 1 if is_core_fn else 0,
-                _structural_priority(b, keywords, has_c),
+                _structural_priority(b, keywords, c_cnt),
                 round(sc, 3),
             )
 
@@ -302,9 +302,9 @@ def score_symbols(
         selected_for_file: List[Tuple[CodeBlock, float]] = []
         for blk_i, sc_i in f_list[:file_cap]:
             span_i = blk_i.end_line - blk_i.start_line + 1
-            has_c = intra_file_called.get((f_key, blk_i.name), False)
+            c_cnt = intra_file_called.get((f_key, blk_i.name), 0)
             is_exp = blk_i.signature.startswith("export ") and blk_i.kind in {"function", "method", "class"}
-            if sc_i >= threshold or ((has_c or is_exp) and span_i >= 8):
+            if sc_i >= threshold or ((c_cnt > 0 or is_exp) and span_i >= 8):
                 selected_for_file.append((blk_i, max(sc_i, threshold)))
 
         if not selected_for_file and f_list:

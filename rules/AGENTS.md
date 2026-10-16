@@ -5,22 +5,22 @@
 </role>
 
 <priority_hierarchy>
-규칙 간 경합이 발생할 경우 반드시 다음 우선순위 위계(1순위 > 2순위 > 3순위)를 적용하여 상위 원칙을 우선합니다:
+규칙 간 경합이 발생할 경우 상황별 분기 조건에 따라 다음 우선순위 위계(1순위 > 2순위 > 3순위)를 적용합니다:
 1순위 (사실 정확성 및 작업 트리 무결성): 모든 판단과 코드 수정은 실제 파일·테스트·실행 로그 근거를 기반으로 수행하며, Git 작업 트리(Worktree)의 청결 상태를 최우선으로 보존합니다.
-2순위 (단일 대상 직접 도구 우선): 아키텍처 문서 지도가 존재하거나 대상 파일 경로·고유 심볼명을 이미 아는 경우에는 기본 도구(`view_file`, `grep`, `replace_file_content`)로 즉시 열람·편집합니다.
-3순위 (인덱스 힌트 탐색 및 배치 실행): 위치가 불분명한 다중 디렉터리 탐색이나 다중 파일 반복 수정 시 `<cli_reference>`의 Fast 스킬 도구와 단일 배치 스크립트를 활용합니다.
+2순위 (단일 대상 직접 열람): 대상 파일 경로나 고유 심볼명을 이미 알고 있는 단일 대상 작업일 때는 기본 도구(`view_file`, `replace_file_content`)로 즉시 열람·편집합니다.
+3순위 (다중 디렉터리 인덱싱 및 배치 실행): 위치가 불분명한 다중 디렉터리 탐색이나 다중 파일 반복 수정일 때만 `<cli_reference>`의 Fast 스킬 도구와 단일 배치 스크립트를 호출합니다.
 </priority_hierarchy>
 
 <reasoning_steps>
 모든 요청을 처리할 때는 다음 3단계 추론 및 실행 절차를 순서대로 수행합니다:
-1. **1단계 (범위 및 근거 판별)**: 요청이 단일 파일·단순 질의인지 다중 디렉터리 탐색인지 분류하고, 기존 문서나 알고 있는 심볼 위치가 있는지 먼저 확인합니다.
-2. **2단계 (최소 턴 도구 실행)**: 1단계 판단에 따라 단일 대상은 `view_file`로 직접 열람하고, 다중 디렉터리 탐색은 `fc-hint.sh`로 구조화된 위치 인덱스(심볼 `L시작-L끝`, 호출처, 모듈 지도, 진입 사슬)를 추출한 뒤 힌트에 있는 위치는 재검색하지 않고 한 번에 묶어 읽습니다.
+1. **1단계 (작업 범위 분류)**: 요청이 단일 파일 대상인지 다중 디렉터리 탐색인지 먼저 판별합니다.
+2. **2단계 (조건별 최소 턴 도구 실행)**: 단일 파일 대상이면 `view_file`로 즉시 열람하고, 다중 디렉터리 탐색이면 `fc-hint.sh`로 관련 파일·심볼 라인 범위(`StartLine`~`EndLine`)를 추출한 뒤 확인된 구간을 `view_file`로 열람합니다.
 3. **3단계 (검증 및 구조화 보고)**: 변경 사항이나 탐색 결과를 테스트·실행 출력으로 검증한 뒤 `<output_format>`의 2단 구조와 클릭 가능한 파일 링크 규격에 맞춰 간결하게 보고합니다.
 </reasoning_steps>
 
 <rules>
 1. [단일 대상 즉시 열람]: 일반 질의응답, 단일 파일 편집, 또는 문서에 위치가 명시된 작업에서는 별도 탐색 스크립트를 실행하는 대신 `view_file`과 `replace_file_content`로 대상 파일을 즉시 열람·수정합니다(호출 1회 이내).
-2. [다중 디렉터리 위치 인덱스 추출 및 일괄 직독]: 구조가 생소한 다중 디렉터리의 모듈 구조와 호출 흐름을 파악할 때는 `fc-hint.sh`로 `Quick Index`(심볼·호출처·리터럴·모듈 지도·진입 사슬)를 먼저 추출하며, 힌트에 이미 포함된 심볼이나 경로는 `grep`·`ls`로 중복 탐색하는 대신 필요한 `StartLine`~`EndLine` 구간들을 한두 번의 턴에 묶어 `view_file`로 즉시 열람합니다.
+2. [다중 디렉터리 구조화 인덱스 기반 열람]: 구조가 생소한 다중 디렉터리를 탐색할 때는 `fc-hint.sh`를 1회 실행하여 관련 심볼 구간과 참조 관계를 먼저 파악하고, 이미 인덱스에 나타난 구간은 별도 탐색 명령 없이 `view_file`(`StartLine`~`EndLine`)로 병렬 열람합니다.
 3. [비시각적 웹 탐색 및 핸드오프 재개]: 실시간 화면 점검이 불필요한 웹 검색·폼 입력 자동화에서는 브라우저를 수동 조작하는 대신 `fast-browser`를 호출하며, `"NEED_TEXT"` 상태가 반환되면 문맥에 맞는 텍스트를 작성해 `--resume`으로 세션을 이어갑니다.
 4. [지침 문서의 객관적 품질 검증]: 에이전트 지침이나 프롬프트 문서를 작성·수정할 때는 단순 문맥 확인만 수행하는 대신 정량 품질 감사 절차를 거쳐 일반화·일관성·출력 스키마 기준이 모두 충족되었는지 검증합니다.
 5. [다중 파일 배치 스크립트 활용]: 여러 파일에 걸친 공통 코드 수정이나 반복 설정 변경 시에는 파일을 개별적으로 편집하는 대신 단일 배치 스크립트로 일괄 적용하고 실행 결과를 검증합니다.
@@ -31,14 +31,14 @@
 
 <cli_reference>
 ```bash
-# 1. fast-context: 다중 디렉터리 Quick Index 위치 힌트 추출
+# 1. fast-context: 다중 디렉터리 구조화 인덱스 추출
 ~/.claude/skills/fc-hint.sh "<TASK_INTENT>" <REPO_ROOT> <DIR1> <DIR2>
 
 # 2. fast-browser: 비시각적 웹 탐색 및 RAM 세션 텍스트 핸드오프
 $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-browser/scripts/fast_browse.py --url "<URL>" --goal "<GOAL>" [--slots '{"k":"v"}']
 
 # 3. prompt-engineer: 12대 프롬프트 품질 기준 감사 (전 항목 >= 0.80 검증)
-$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/prompt-engineer/scripts/audit_prompt.py --file <PATH>
+$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/prompt-engineer/scripts/audit_prompt.py --file <PATH> [--failed-case "<FAILED_EXAMPLE>"]
 ```
 </cli_reference>
 

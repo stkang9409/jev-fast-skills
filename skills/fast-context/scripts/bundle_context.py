@@ -41,7 +41,7 @@ def main():
         "--path",
         type=str,
         default=".",
-        help="Comma-separated target directories to scan (e.g. 'electron/claims,packages/hira-claim-core/src')",
+        help="Comma-separated target directories to scan (e.g. 'src/api,packages/core')",
     )
     parser.add_argument(
         "--repo-root",

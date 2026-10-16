@@ -58,7 +58,6 @@ STOPWORDS: Set[str] = {
     "the", "and", "for", "with", "from", "that", "this", "what", "where", "when",
     "how", "why", "who", "which", "into", "onto", "upon", "about", "above", "below",
     "코드", "파일", "함수", "찾기", "탐색", "관련", "로직", "구현", "위치", "확인", "전체",
-    "생성", "결과", "검증", "조사", "가져오기", "가져", "오기", "시간", "시간대", "규칙", "흐름",
 }
 
 GENERIC_PATH_TOKENS: Set[str] = {
@@ -86,14 +85,15 @@ SQL_TABLE_RE = re.compile(
 def extract_intent_keywords(task_intent: str, path_hints: Optional[List[str]] = None) -> List[str]:
     """
     Domain-agnostic tokenizer: extracts alphanumeric/CJK tokens, incorporates specific
-    directory tokens from `path_hints`, and splits 4+ char Korean compound nouns (excluding verbs).
+    directory tokens from `path_hints`, and splits 4+ char Korean compound nouns (excluding action verbs).
     """
     raw_tokens = re.findall(r"[a-zA-Z0-9_가-힣.-]{2,}", task_intent.lower())
     seen: Set[str] = set()
     keywords: List[str] = []
+    verb_endings = ("하기", "오기", "주기", "보기", "되기", "쓰기", "읽기", "찾기", "열기", "닫기", "넣기", "빼기")
 
     def add_kw(k: str):
-        if k and len(k) >= 2 and k not in STOPWORDS and k not in GENERIC_PATH_TOKENS and k not in seen:
+        if k and len(k) >= 2 and k not in STOPWORDS and k not in GENERIC_PATH_TOKENS and not k.endswith(verb_endings) and k not in seen:
             seen.add(k)
             keywords.append(k)
 
@@ -101,7 +101,7 @@ def extract_intent_keywords(task_intent: str, path_hints: Optional[List[str]] = 
         add_kw(t)
         for sub in re.split(r"[-_./]", t):
             add_kw(sub)
-        if re.fullmatch(r"[가-힣]{4,}", t) and not t.endswith(("하기", "오기", "주기", "보기", "되기")):
+        if re.fullmatch(r"[가-힣]{4,}", t) and not t.endswith(verb_endings):
             add_kw(t[:2])
             add_kw(t[2:])
 
@@ -117,7 +117,7 @@ def extract_intent_keywords(task_intent: str, path_hints: Optional[List[str]] = 
 
 
 def extract_domain_ascii_keywords(task_intent: str, path_hints: Optional[List[str]] = None, selected_files: Optional[Set[str]] = None) -> List[str]:
-    """Extract specific ASCII/numeric domain tokens (e.g. claims, ddmd, sam, 091, hira) from intent and path hints."""
+    """Extract specific ASCII/numeric domain tokens from intent and path hints."""
     kws = extract_intent_keywords(task_intent, path_hints=path_hints)
     ascii_kws: List[str] = []
     seen: Set[str] = set()
@@ -262,11 +262,9 @@ def get_file_summaries(
     For broad directories (>50 files), strictly pre-filters to files matching task/path keywords.
     """
     root = base_dir.resolve()
-    keywords = extract_intent_keywords(task_intent, path_hints=path_hints) if (task_intent or path_hints) else []
+    keywords = extract_intent_keywords(task_intent) if task_intent else []
     domain_kws = extract_domain_ascii_keywords(task_intent, path_hints=path_hints)
     is_broad_dir = len(files) > 50
-    wants_cases = "case" in task_intent.lower() or "사례" in task_intent.lower()
-    wants_auto = any(w in task_intent.lower() for w in ("auto", "자보", "자동차", "산재"))
 
     # Pass 1: Fast lexical & path pre-filter before heavy regex extraction
     pre_candidates: List[Tuple[float, int, bool, bool, Path, str, str]] = []
@@ -280,12 +278,8 @@ def get_file_summaries(
 
         rel_lower = rel_path.lower()
         is_doc = f.suffix.lower() in DOC_EXTENSIONS
-        if is_doc and not wants_cases and "/case-" in rel_lower:
-            continue
-        if not wants_auto and ("auto-insurance" in rel_lower or "material-purchase" in rel_lower or "industrial-accident" in rel_lower):
-            continue
 
-        # In broad directories (>50 files like electron/ or docs/), skip reading disk if path doesn't match domain keywords when domain_kws exist
+        # In broad directories (>50 files), skip reading code files whose path doesn't match domain keywords
         if is_broad_dir and not is_doc and domain_kws:
             if not any(_kw_in_text(dk, rel_lower) for dk in domain_kws):
                 continue

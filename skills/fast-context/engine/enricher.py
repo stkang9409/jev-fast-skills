@@ -1,4 +1,4 @@
-"""Domain-agnostic structural graph enricher (v4.1): Sub-100ms Single-Pass Inverted Call Index, Caller-Priority Symbol Retention, Keyword-Filtered Entry Chains & DB Callees."""
+"""Domain-agnostic structural graph enricher: Sub-100ms Single-Pass Inverted Call Index, Caller-Priority Symbol Retention, Keyword-Filtered Entry Chains & DB Callees."""
 
 import re
 import subprocess
@@ -15,8 +15,9 @@ from .scanner import (
     _kw_in_text,
 )
 
+# General camelCase/identifier discriminator property pattern (matches *Id, *Kind, *Version, *Mode, *Scope, *Purpose, *Format, *Profile, etc.)
 DISC_RE = re.compile(
-    r"\b(purpose|sourceKind|formProfileId|profileId|contractVersion|mode)\s*:\s*(['\"][a-zA-Z0-9_.-]+['\"])"
+    r"\b([a-z][a-zA-Z0-9]*(?:Id|Kind|Version|Mode|Scope|Purpose|Format|Profile)|mode|kind|purpose|version|scope|format)\s*:\s*(['\"][a-zA-Z0-9_.-]{3,60}['\"])"
 )
 ERR_RE = re.compile(
     r"(?:fail\s*\(\s*|code\s*:\s*|new\s+[A-Za-z0-9_]*Error\s*\(\s*)(['\"][A-Z][A-Z0-9_]{5,}['\"])"
@@ -152,10 +153,8 @@ def enrich_and_refine_blocks(
     2. 1-Hop Intra-Target Callee Promotion
     3. Caller-Priority Symbol Refinement per File (retains exported & 1-hop-from-export functions first)
     4. Keyword-Filtered Entry Chains (IPC/API -> Handler -> Preload -> UI)
-    5. Selected-Block & Matched-Handler DB / Repository Links (including loadHiraResultFilesForBatch)
+    5. Selected-Block & Matched-Handler DB / Repository Links
     """
-    wants_auto = any(w in task_intent.lower() for w in ("auto", "자보", "자동차", "산재"))
-
     selected_files: Set[str] = set()
     for blk, _ in scored_blocks:
         try:
@@ -166,11 +165,11 @@ def enrich_and_refine_blocks(
             selected_files.add(rel)
 
     domain_kws = extract_domain_ascii_keywords(task_intent, path_hints=path_hints, selected_files=selected_files)
-    all_kws = extract_intent_keywords(task_intent, path_hints=path_hints)
+    intent_ascii_kws = extract_domain_ascii_keywords(task_intent)
+    all_kws = extract_intent_keywords(task_intent)
 
     code_cache, dir_file_counts = _load_narrow_code_cache(repo_root, dir_groups, selected_files, domain_kws)
 
-    # Filter out noise files in broad directories (>50 files) and repository files better shown in DB Links
     broad_prefixes: Set[str] = set()
     focused_prefixes: Set[str] = set()
     if dir_groups:
@@ -186,6 +185,44 @@ def enrich_and_refine_blocks(
             except ValueError:
                 continue
 
+    # Build cross-file call check among focused selected files (avoiding local function name collisions)
+    all_selected_List = [
+        sf for sf in selected_files
+        if not sf.endswith(".md")
+        and not (
+            any(sf == bp or sf.startswith(bp + "/") for bp in broad_prefixes)
+            and not any(sf == fp or sf.startswith(fp + "/") for fp in focused_prefixes)
+        )
+    ]
+
+    def _is_called_by_other_selected(rel_path: str) -> bool:
+        exp_names = [
+            b.name for b in parse_file(repo_root / rel_path)
+            if b.signature.startswith("export ") and b.kind in {"function", "method", "class"} and len(b.name) >= 6
+        ]
+        if not exp_names:
+            return False
+        for other in all_selected_List:
+            if other == rel_path:
+                continue
+            o_txt = code_cache.get(other, "")
+            if not o_txt:
+                continue
+            for en in exp_names:
+                if en in o_txt and f"function {en}" not in o_txt and re.search(rf"\b{re.escape(en)}\s*\(", o_txt):
+                    return True
+        return False
+
+    # Count how many files per focused directory match intent_ascii_kws in their filename
+    foc_dir_intent_matches: Dict[str, int] = {}
+    if intent_ascii_kws:
+        for fp in focused_prefixes:
+            foc_dir_intent_matches[fp] = sum(
+                1 for f_rel in code_cache
+                if (f_rel == fp or f_rel.startswith(fp + "/"))
+                and any(_kw_in_text(ik, Path(f_rel).stem.lower()) for ik in intent_ascii_kws)
+            )
+
     cleaned_blocks: List[Tuple[CodeBlock, float]] = []
     for blk, sc in scored_blocks:
         try:
@@ -194,16 +231,19 @@ def enrich_and_refine_blocks(
             rel = ""
         if rel and not rel.endswith(".md"):
             rel_low = rel.lower()
-            if not wants_auto and ("auto-insurance" in rel_low or "material-purchase" in rel_low or "industrial-accident" in rel_low):
-                selected_files.discard(rel)
-                continue
             in_focused = any(rel == fp or rel.startswith(fp + "/") for fp in focused_prefixes)
             in_broad = any(rel == bp or rel.startswith(bp + "/") for bp in broad_prefixes)
             if in_broad and not in_focused:
-                # Repository classes in broad dirs (e.g. electron/db/repositories/...) are resolved in DB Links
                 if "repositor" in rel_low or (domain_kws and not any(_kw_in_text(kw, rel_low) for kw in domain_kws)):
                     selected_files.discard(rel)
                     continue
+            elif in_focused and intent_ascii_kws:
+                matching_fp = next((fp for fp in focused_prefixes if rel == fp or rel.startswith(fp + "/")), None)
+                if matching_fp and foc_dir_intent_matches.get(matching_fp, 0) >= 3:
+                    has_stem_match = any(_kw_in_text(ik, Path(rel).stem.lower()) for ik in intent_ascii_kws)
+                    if not has_stem_match and not _is_called_by_other_selected(rel):
+                        selected_files.discard(rel)
+                        continue
         cleaned_blocks.append((blk, sc))
     scored_blocks = cleaned_blocks
 
@@ -230,10 +270,11 @@ def enrich_and_refine_blocks(
             for f_rel, txt in code_cache.items():
                 if f_rel in selected_files:
                     continue
-                if not wants_auto and "auto-insurance" in f_rel.lower():
-                    continue
                 if not (f_rel == pref or f_rel.startswith(pref + "/")):
                     continue
+                if intent_ascii_kws and foc_dir_intent_matches.get(pref, 0) >= 3:
+                    if not any(_kw_in_text(ik, Path(f_rel).stem.lower()) for ik in intent_ascii_kws) and not _is_called_by_other_selected(f_rel):
+                        continue
                 line_cnt = len(txt.splitlines())
                 if line_cnt < 60:
                     continue
@@ -242,11 +283,17 @@ def enrich_and_refine_blocks(
                     b for b in blocks
                     if b.signature.startswith("export ") and b.kind in {"function", "method", "class"} and len(b.name) >= 6
                 ]
-                called = [b for b in exp_funcs if b.name in combined_selected_text and re.search(rf"\b{re.escape(b.name)}\s*\(", combined_selected_text)]
+                called = [
+                    b for b in exp_funcs
+                    if b.name in combined_selected_text
+                    and f"function {b.name}" not in combined_selected_text
+                    and re.search(rf"\b{re.escape(b.name)}\s*\(", combined_selected_text)
+                ]
                 if called:
-                    candidates_in_dir.append((line_cnt, f_rel, called[:2]))
-            candidates_in_dir.sort(key=lambda x: x[0], reverse=True)
-            for _, f_rel, c_blocks in candidates_in_dir[:2]:
+                    kw_overlap = sum(1 for kw in all_kws if _kw_in_text(kw, f_rel.lower()) or _kw_in_text(kw, txt.lower()))
+                    candidates_in_dir.append((kw_overlap, line_cnt, f_rel, called[:2]))
+            candidates_in_dir.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            for _, _, f_rel, c_blocks in candidates_in_dir[:2]:
                 for b in c_blocks:
                     scored_blocks.append((b, 0.62))
                 selected_files.add(f_rel)
@@ -255,7 +302,8 @@ def enrich_and_refine_blocks(
     call_index: Dict[str, List[Tuple[str, int]]] = {}
     def_prefixes = ("function ", "async function ", "export ", "def ", "class ", "//", "*", "module.exports")
     for f_rel, txt in code_cache.items():
-        if not wants_auto and ("auto-insurance" in f_rel.lower() or "industrial-accident" in f_rel.lower()):
+        in_foc = any(f_rel == fp or f_rel.startswith(fp + "/") for fp in focused_prefixes)
+        if in_foc and f_rel not in selected_files:
             continue
         for li, line in enumerate(txt.splitlines(), 1):
             s_line = line.strip()
@@ -335,14 +383,12 @@ def enrich_and_refine_blocks(
             )
             b_text_low = (b.name + " " + b.content).lower()
             kw_hit = sum(1 for kw in all_kws if len(kw) >= 2 and kw in b_text_low)
-            if ERR_RE.search(b.content) or "Failure(" in b.content:
-                kw_hit += 2
-            if b.name.startswith(("assert", "validate", "check", "verify", "inspect")) or b.name.endswith(("Failure", "Error")):
-                kw_hit += 4
+            # In-file fan-in bonus: functions called by many internal sites (e.g. shared error/validation builders) get higher weight
+            fan_in_bonus = min(len(int_c), 5)
 
             # Structural Call-Graph Tiering:
             # Tier 4: Substantive (span >= 8) exported functions with external callers
-            # Tier 3: Substantive (span >= 8) exported functions OR direct 1-hop callees of the file's exported functions (e.g. operationDataFailure, assertNightSurchargeTimes, assertUsageIncentivePrices)
+            # Tier 3: Substantive (span >= 8) exported functions OR direct 1-hop callees of the file's exported functions
             # Tier 2: Substantive (span >= 8) internal functions with internal callers
             # Tier 1: Smaller functions with callers/exports
             tier = 0
@@ -356,7 +402,7 @@ def enrich_and_refine_blocks(
                 tier = 1
 
             if tier >= 2 or b_name in score_map:
-                ranked_for_file.append((tier, kw_hit, round(sc, 3), min(span, 200), b, max(sc, 0.60)))
+                ranked_for_file.append((tier, round(sc, 2), kw_hit + fan_in_bonus, min(span, 200), b, max(sc, 0.60)))
 
         ranked_for_file.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
         chosen_for_file = [(item[4], item[5]) for item in ranked_for_file[:max_per_file]]
@@ -416,8 +462,6 @@ def enrich_and_refine_blocks(
             rel = str(b.file_path.resolve().relative_to(repo_root.resolve())).replace(chr(92), "/")
         except ValueError:
             continue
-        if not wants_auto and "auto-" in rel.lower():
-            continue
         txt = code_cache.get(rel, "")
         if not txt:
             continue
@@ -448,7 +492,8 @@ def enrich_and_refine_blocks(
     for f_rel, txt in code_cache.items():
         if "handleIpc" not in txt and "ipcMain" not in txt:
             continue
-        if not wants_auto and ("auto-" in f_rel.lower() or "material-purchase" in f_rel.lower()):
+        in_foc = any(f_rel == fp or f_rel.startswith(fp + "/") for fp in focused_prefixes)
+        if in_foc and f_rel not in selected_files:
             continue
         lines = txt.splitlines(keepends=True)
         local_helper_to_primary: Dict[str, str] = {}
@@ -467,8 +512,6 @@ def enrich_and_refine_blocks(
             if ch in seen_channels:
                 continue
             ch_low = ch.lower()
-            if not wants_auto and ("auto-" in ch_low or "material-purchase" in ch_low):
-                continue
             ch_matches_kw = any(_kw_in_text(kw, ch_low) for kw in domain_kws) if domain_kws else True
 
             s_line = txt[:m.start()].count("\n") + 1
@@ -541,8 +584,6 @@ def enrich_and_refine_blocks(
                 continue
             if f_rel in selected_files and "repositor" not in f_rel.lower():
                 continue
-            if not wants_auto and "auto-" in f_rel.lower():
-                continue
             m = pat.search(txt)
             if not m:
                 continue
@@ -591,8 +632,6 @@ def enrich_and_refine_blocks(
             for f in sorted(code_cache.keys()):
                 if f in selected_files or f in covered_in_chains_or_db:
                     continue
-                if not wants_auto and ("auto-insurance" in f.lower() or "material-purchase" in f.lower()):
-                    continue
                 if not (f == g_rel_prefix or f.startswith(g_rel_prefix + "/")):
                     continue
                 if any(f == cp or f.startswith(cp + "/") for cp in child_prefixes):
@@ -615,13 +654,12 @@ def enrich_and_refine_blocks(
                 mod_txt = code_cache.get(df, "")
                 mod_discs: List[str] = []
                 seen_md: Set[str] = set()
-                if "purpose" in mod_txt or "sourceKind" in mod_txt or "mode" in mod_txt:
-                    for li, l_str in enumerate(mod_txt.splitlines(), 1):
-                        for dm in DISC_RE.finditer(l_str):
-                            kv = f"{dm.group(1)}={dm.group(2)}"
-                            if kv not in seen_md and dm.group(1) in {"purpose", "sourceKind", "mode"}:
-                                seen_md.add(kv)
-                                mod_discs.append(f"{kv} L{li}")
+                for li, l_str in enumerate(mod_txt.splitlines(), 1):
+                    for dm in DISC_RE.finditer(l_str):
+                        kv = f"{dm.group(1)}={dm.group(2)}"
+                        if kv not in seen_md:
+                            seen_md.add(kv)
+                            mod_discs.append(f"{kv} L{li}")
                 info_parts = exp_funcs[:2] + mod_discs[:2]
                 if info_parts:
                     mod_entries.append(f"`{sub_rel}` ({', '.join(info_parts)})")
