@@ -119,27 +119,38 @@ def score_files(
 
     if not filtered and scored_files:
         filtered = scored_files[:3]
-    return filtered[:max_files]
+
+    doc_filtered = [item for item in filtered if item[0].lower().endswith(".md")][:4]
+    code_filtered = [item for item in filtered if not item[0].lower().endswith(".md")][: max(1, max_files - len(doc_filtered))]
+    combined = code_filtered + doc_filtered
+    combined.sort(key=lambda x: x[1], reverse=True)
+    return combined[:max_files]
 
 
-def _structural_priority(blk: CodeBlock, keywords: List[str]) -> float:
+def _structural_priority(blk: CodeBlock, keywords: List[str], has_caller: bool = False) -> float:
     """
-    Domain-agnostic structural priority used ONLY when a single file has >18 blocks
-    or as a tie-breaker between identical Jev scores.
+    Domain-agnostic structural priority: prioritizes functions with callers and substantive
+    exported functions over tiny wrappers or types.
     """
     span = max(1, blk.end_line - blk.start_line + 1)
     is_exported = blk.signature.startswith("export ")
     prio = 0.0
-    if is_exported:
-        prio += 2.0
+    if has_caller and span >= 8:
+        prio += 3.5
+    elif has_caller:
+        prio += 1.5
+    if is_exported and span >= 8:
+        prio += 3.0
+    elif is_exported:
+        prio += 1.0
     if blk.kind in {"function", "method", "ipc", "doc_section"}:
         prio += 1.5
     elif blk.kind == "type":
-        prio -= 1.0
-    if span >= 8:
+        prio -= 1.5
+    if span >= 12:
         prio += 1.5
-    elif span <= 5 and not is_exported:
-        prio -= 2.0
+    elif span <= 5:
+        prio -= 2.5
     s_low = blk.summary.lower()
     n_low = blk.name.lower()
     for kw in keywords:
@@ -155,12 +166,14 @@ def score_symbols(
     blocks: List[CodeBlock],
     threshold: float = 0.60,
     max_blocks: int = 75,
-    max_per_file: int = 4,
+    max_per_file: int = 5,
     max_workers: int = 8,
 ) -> List[Tuple[CodeBlock, float]]:
     """
-    Stage 2: Score symbols across Stage-1 files using Pure TypeSafe Jev multilingual semantic evaluation.
+    Stage 2: Score symbols across Stage-1 files using TypeSafe Jev while prioritizing
+    functions that have callers or are substantive exported entrypoints.
     """
+    import re
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
         raise ValueError("TYPESAFE_API_KEY is not set.")
@@ -174,22 +187,45 @@ def score_symbols(
     for blk in blocks:
         by_file.setdefault(str(blk.file_path), []).append(blk)
 
+    intra_file_called: Dict[Tuple[str, str], bool] = {}
+    for f_key, f_blocks in by_file.items():
+        if f_key.endswith(".md"):
+            continue
+        for b in f_blocks:
+            if b.kind not in {"function", "method", "class"} or len(b.name) < 5:
+                continue
+            pat = re.compile(rf"\b{re.escape(b.name)}\s*\(")
+            for other in f_blocks:
+                if other.name != b.name and pat.search(other.content):
+                    intra_file_called[(f_key, b.name)] = True
+                    break
+
     wants_types = any(w in task_intent.lower() for w in ("type", "interface", "schema", "타입", "인터페이스", "스키마"))
     candidates_for_jev: List[CodeBlock] = []
     for f_key, f_blocks in by_file.items():
+        is_doc = f_key.endswith(".md")
         func_blocks = [b for b in f_blocks if b.kind in {"function", "method", "class", "doc_section"}]
         pool = func_blocks if (func_blocks and not wants_types) else f_blocks
-        if len(pool) > 14:
+        per_file_cap = 5 if is_doc else 9
+        if len(pool) > per_file_cap:
             substantive = [
                 b for b in pool
-                if (b.end_line - b.start_line + 1) >= 6 or b.signature.startswith("export ")
+                if (b.end_line - b.start_line + 1) >= 7
+                or b.signature.startswith("export ")
+                or intra_file_called.get((f_key, b.name), False)
             ]
             if not substantive:
                 substantive = pool
-            substantive.sort(key=lambda b: _structural_priority(b, keywords), reverse=True)
-            candidates_for_jev.extend(substantive[:32])
+            substantive.sort(
+                key=lambda b: _structural_priority(b, keywords, intra_file_called.get((f_key, b.name), False)),
+                reverse=True,
+            )
+            candidates_for_jev.extend(substantive[:per_file_cap])
         else:
             candidates_for_jev.extend(pool)
+
+    if len(candidates_for_jev) > 68:
+        candidates_for_jev = candidates_for_jev[:68]
 
     chunk_size = 24
     batches = [candidates_for_jev[i : i + chunk_size] for i in range(0, len(candidates_for_jev), chunk_size)]
@@ -241,46 +277,46 @@ def score_symbols(
     for blk, sc in scored_blocks:
         scored_by_file.setdefault(str(blk.file_path), []).append((blk, sc))
 
-    filtered: List[Tuple[CodeBlock, float]] = []
+    code_selected: List[Tuple[CodeBlock, float]] = []
+    doc_selected: List[Tuple[CodeBlock, float]] = []
+
     for f_key, f_list in scored_by_file.items():
-        f_list.sort(
-            key=lambda x: (round(x[1], 3), _structural_priority(x[0], keywords)),
-            reverse=True,
-        )
-        above = [item for item in f_list if item[1] >= threshold]
+        is_doc = f_key.endswith(".md")
+        file_cap = 3 if is_doc else max_per_file
+
+        def rank_key(item: Tuple[CodeBlock, float]):
+            b, sc = item
+            span = b.end_line - b.start_line + 1
+            has_c = intra_file_called.get((f_key, b.name), False)
+            is_exp = b.signature.startswith("export ") and b.kind in {"function", "method", "class"}
+            is_core_fn = (has_c or is_exp) and span >= 8
+            passes = sc >= threshold or (is_core_fn and sc >= threshold - 0.15)
+            return (
+                1 if passes else 0,
+                1 if is_core_fn else 0,
+                _structural_priority(b, keywords, has_c),
+                round(sc, 3),
+            )
+
+        f_list.sort(key=rank_key, reverse=True)
         selected_for_file: List[Tuple[CodeBlock, float]] = []
-        if above:
-            limit = max_per_file + 1 if len(above) >= 5 and above[4][1] >= 0.61 else max_per_file
-            selected_for_file = list(above[:limit])
-        elif f_list:
-            # Keep the primary exported function (or top block) of every Stage-1 selected file
-            exported_funcs = [
-                item for item in f_list
-                if item[0].signature.startswith("export ") and item[0].kind in {"function", "method", "class"}
-            ]
-            if exported_funcs:
-                exported_funcs.sort(key=lambda x: (x[0].end_line - x[0].start_line, x[1]), reverse=True)
-                for blk_e, sc_e in exported_funcs[:2]:
-                    selected_for_file.append((blk_e, max(sc_e, threshold)))
-            elif f_list[0][1] >= threshold - 0.12:
-                selected_for_file.append((f_list[0][0], max(f_list[0][1], threshold)))
+        for blk_i, sc_i in f_list[:file_cap]:
+            span_i = blk_i.end_line - blk_i.start_line + 1
+            has_c = intra_file_called.get((f_key, blk_i.name), False)
+            is_exp = blk_i.signature.startswith("export ") and blk_i.kind in {"function", "method", "class"}
+            if sc_i >= threshold or ((has_c or is_exp) and span_i >= 8):
+                selected_for_file.append((blk_i, max(sc_i, threshold)))
 
-        # Also ensure the main exported entrypoint function of a selected code file isn't omitted when internal helpers matched
-        if selected_for_file and not f_key.endswith(".md"):
-            main_exports = [
-                item for item in f_list
-                if item[0].signature.startswith("export ") and item[0].kind in {"function", "method", "class"}
-            ]
-            if main_exports:
-                main_exports.sort(key=lambda x: (x[0].end_line - x[0].start_line, x[1]), reverse=True)
-                primary_blk, primary_sc = main_exports[0]
-                if all(b.name != primary_blk.name for b, _ in selected_for_file):
-                    if len(selected_for_file) >= max_per_file + 1:
-                        selected_for_file[-1] = (primary_blk, max(primary_sc, threshold))
-                    else:
-                        selected_for_file.append((primary_blk, max(primary_sc, threshold)))
+        if not selected_for_file and f_list:
+            selected_for_file.append((f_list[0][0], max(f_list[0][1], threshold)))
 
-        filtered.extend(selected_for_file)
+        if is_doc:
+            doc_selected.extend(selected_for_file[:3])
+        else:
+            code_selected.extend(selected_for_file[:max_per_file])
 
-    filtered.sort(key=lambda x: x[1], reverse=True)
-    return filtered[:max_blocks]
+    doc_selected.sort(key=lambda x: x[1], reverse=True)
+    code_selected.sort(key=lambda x: x[1], reverse=True)
+    doc_kept = doc_selected[:12]
+    code_kept = code_selected[: max(1, max_blocks - len(doc_kept))]
+    return code_kept + doc_kept

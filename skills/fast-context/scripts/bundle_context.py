@@ -130,7 +130,7 @@ def main():
         reverse=True,
     )
 
-    per_dir_quota = max(60, 140 // max(1, len(ordered_scan_dirs)))
+    per_dir_quota = max(14, 32 // max(1, len(ordered_scan_dirs)))
     for label, rp in ordered_scan_dirs:
         child_dirs = {other_p for _, other_p in ordered_scan_dirs if other_p != rp and rp in other_p.parents}
         d_files = get_repo_files(
@@ -143,11 +143,14 @@ def main():
         for f in unique_d_files:
             seen_files.add(f.resolve())
         all_candidate_files.extend(unique_d_files)
+        # If a directory is a broad parent of another target directory (e.g. `electron` when `electron/claims` is also specified), cap it tightly
+        quota_for_dir = 6 if (child_dirs and len(unique_d_files) > 25) else per_dir_quota
         d_summaries = get_file_summaries(
             unique_d_files,
             repo_root,
             task_intent=args.task_intent,
-            max_candidates=per_dir_quota,
+            max_candidates=quota_for_dir,
+            path_hints=raw_paths,
         )
         combined_summaries.update(d_summaries)
 
@@ -161,7 +164,8 @@ def main():
             doc_files,
             repo_root,
             task_intent=args.task_intent,
-            max_candidates=16,
+            max_candidates=6,
+            path_hints=raw_paths,
         )
         combined_summaries.update(doc_summaries)
 
@@ -169,9 +173,9 @@ def main():
         print(f"[fast-context] No valid source files found in {repo_root}", file=sys.stderr)
         sys.exit(1)
 
-    # Stage 1: Score candidate files across all directories in parallel (wide recall: up to 24 files)
+    # Stage 1: Score candidate files across all directories in parallel (wide recall: up to 20 files)
     t_f0 = time.perf_counter()
-    max_files_limit = 24 if (args.hint or not args.print_bundle) else 12
+    max_files_limit = 20 if (args.hint or not args.print_bundle) else 12
     scored_files = score_files(
         args.task_intent,
         combined_summaries,
@@ -197,19 +201,24 @@ def main():
         all_blocks,
         threshold=args.symbol_threshold,
         max_blocks=max_blocks_limit,
-        max_per_file=4,
+        max_per_file=5,
     )
     t_s1 = time.perf_counter()
 
-    elapsed_ms = round((time.perf_counter() - start_time) * 1000)
-
-    # Build both Hint (index-only) and Bundle (if requested via --output or --print-bundle)
+    # Build Hint (index-only)
     hint_text = build_hint(
         scored_blocks=scored_symbols,
         repo_root=repo_root,
         dir_groups=dir_groups if len(dir_groups) > 1 else None,
         include_links=args.links,
+        task_intent=args.task_intent,
+        path_hints=raw_paths,
     )
+    elapsed_ms = round((time.perf_counter() - start_time) * 1000)
+
+    if args.hint and not args.output and not args.print_bundle and not args.json:
+        print(hint_text)
+        return
 
     bundle_md = build_bundle(
         task_intent=args.task_intent,

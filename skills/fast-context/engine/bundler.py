@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
 from .parser import CodeBlock
-from .enricher import build_enriched_metadata, promote_call_graph_neighbors
+from .enricher import enrich_and_refine_blocks
 
 
 def build_hint(
@@ -12,6 +12,8 @@ def build_hint(
     repo_root: Path,
     dir_groups: Optional[List[Tuple[str, Path]]] = None,
     include_links: bool = False,
+    task_intent: str = "",
+    path_hints: Optional[List[str]] = None,
 ) -> str:
     """
     Build a rich Structural Quick Index Hint:
@@ -21,8 +23,13 @@ def build_hint(
     - 1-Hop DB / Repository Links & SQL tables
     """
     root = repo_root.resolve()
-    scored_blocks = promote_call_graph_neighbors(root, dir_groups, scored_blocks)
-    enriched = build_enriched_metadata(root, dir_groups, scored_blocks)
+    scored_blocks, enriched = enrich_and_refine_blocks(
+        root,
+        dir_groups,
+        scored_blocks,
+        task_intent=task_intent,
+        path_hints=path_hints,
+    )
     sym_callers = enriched.get("symbol_callers", {})
     file_literals = enriched.get("file_literals", {})
     dir_module_maps = enriched.get("dir_module_maps", {})
