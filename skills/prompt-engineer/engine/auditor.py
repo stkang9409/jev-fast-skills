@@ -36,9 +36,10 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "사후 표적 기소 / 1회성 땜질 방지 (No Post-hoc Overfitting)",
         "source": "Anthropic & OpenAI Eval Best Practices",
         "question": (
-            "Are all rules in the [Target Prompt] written as universal, generalizable behavioral principles "
-            "rather than narrow post-hoc band-aids targeting specific one-off words, prices, or reactive patches "
-            "from a single failed conversation? (Yes = universal principles, No = contains narrow 1-off band-aids)"
+            "Are all rules in the [target_prompt] written as universal, generalizable operational principles "
+            "rather than narrow post-hoc band-aids targeting specific benchmark repositories, domain-specific "
+            "business terms, one-off words/prices, or reactive excuses from a single failed test run? "
+            "(Yes = universal & generalizable principles, No = contains narrow 1-off band-aids)"
         ),
         "fix_guide": (
             "특정 실패 사례에서 나온 지엽적 상황·단어·숫자를 콕 집어 막는 조건문('~라고 물으면 ~하지 마라')을 제거하고, "
@@ -52,8 +53,10 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "source": "Prompt Overfitting & Few-Shot Contamination Literature",
         "question": (
             "Are the rules in [target_prompt] abstracted into general categories rather than hardcoding specific "
-            "test-case numbers, specific prices, or verbatim user quotes leaked from failed test cases? "
-            "(Note: standard fallback response templates are allowed. Yes = properly abstracted, No = leaks test-case literals)"
+            "test-case numbers, specific prices, domain-specific business examples, or verbatim user quotes leaked "
+            "from failed test cases? "
+            "(Note: standard CLI invocation syntax and fallback templates are allowed. "
+            "Yes = properly abstracted, No = leaks test-case literals)"
         ),
         "fix_guide": (
             "규칙 본문에 하드코딩된 특정 테스트 문구·금액·고유명사를 일반 범주(예: '구체적 비용 언급', '민감 정보')로 치환하고, "
@@ -66,7 +69,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "규칙 간 내적 모순 부재 (Zero Internal Contradiction)",
         "source": "OpenAI GPT-4.1 & Anthropic Claude 4 Conflict Guides",
         "question": (
-            "Are all instructions in the [Target Prompt] mutually consistent without any contradictory demands "
+            "Are all instructions in the [target_prompt] mutually consistent without any contradictory demands "
             "(such as demanding a 1-sentence short reply while simultaneously requiring exhaustive detailed explanations, "
             "or forbidding questions while requiring follow-up questions)? (Yes = 100% consistent, No = has contradictions)"
         ),
@@ -81,7 +84,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "충돌 해결 우선순위 위계 명시 (Explicit Priority Hierarchy)",
         "source": "Instruction Hierarchy & Prompt Debt Management",
         "question": (
-            "Does the [Target Prompt] explicitly define a priority hierarchy or tie-breaking precedence rule "
+            "Does the [target_prompt] explicitly define a priority hierarchy or tie-breaking precedence rule "
             "(e.g., 'Safety > Accuracy > Brevity' or 'Rule A supersedes Rule B when they conflict') so the model "
             "knows which constraint wins under tension? (Yes = explicit priority hierarchy defined, No = no hierarchy)"
         ),
@@ -96,9 +99,10 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "부정어 도배 방지 & 긍정 대안 제시 (Positive Fallback over Negative Stacking)",
         "source": "Anthropic Claude 4 & Ironic Process ('Pink Elephant') Effect",
         "question": (
-            "Instead of stacking bare negative prohibitions ('Do NOT', 'NEVER', '절대 ~하지 마', '금지'), "
-            "does the [Target Prompt] phrase instructions affirmatively and pair every prohibition with a concrete "
-            "positive alternative action ('Instead, do X')? (Yes = affirmative with fallbacks, No = bare prohibitions)"
+            "Are the instructions in [target_prompt] phrased affirmatively with concrete positive actions "
+            "(and whenever a restriction is stated, is it paired with a clear '대신 / Instead, do X' fallback) "
+            "rather than stacking bare negative prohibitions ('절대 ~하지 마', '금지')? "
+            "(Yes = affirmative & constructive with fallbacks, No = bare negative prohibitions)"
         ),
         "fix_guide": (
             "'절대 ~하지 마라/금지'만 나열하면 리터럴 추종 모델(Claude 4/GPT-4.1)이 과도하게 얼어붙거나 금지어에 주의를 빼앗깁니다. "
@@ -111,7 +115,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "지시문·컨텍스트·입력의 구조적 격리 (Structural Delimiters & Isolation)",
         "source": "Anthropic XML Tagging & OpenAI Prompt Injection Defense",
         "question": (
-            "Is the [Target Prompt] clearly structured using distinct XML tags (like <role>, <rules>, <context>, "
+            "Is the [target_prompt] clearly structured using distinct XML tags (like <role>, <rules>, <context>, "
             "<output_format>) or clean Markdown headers that isolate instructions from reference data and user input? "
             "(Yes = well-delimited sections/tags, No = flat unseparated text or bullet list)"
         ),
@@ -126,7 +130,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "출력 형식·스키마·경계 조건의 엄밀성 (Rigorous Output Specification)",
         "source": "Google Gemini & OpenAI Structured Output Guides",
         "question": (
-            "Does the [Target Prompt] define the expected output format, structure, length bounds, or schema "
+            "Does the [target_prompt] define the expected output format, structure, length bounds, or schema "
             "with objective, verifiable precision? (Yes = rigorous output specification, No = vague or contradictory output spec)"
         ),
         "fix_guide": (
@@ -139,7 +143,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "엣지 케이스 & 환각 방어(Abstention) 규칙 (Edge-Case & Anti-Hallucination Fallback)",
         "source": "Anthropic Epistemic Humility & Grounding Guidelines",
         "question": (
-            "Beyond the happy path, does the [Target Prompt] explicitly instruct the model on how to handle "
+            "Beyond the happy path, does the [target_prompt] explicitly instruct the model on how to handle "
             "ambiguous, missing, out-of-scope, or unverified information (e.g., abstaining or stating uncertainty "
             "rather than guessing/hallucinating)? (Yes = explicit edge-case/abstention rule, No = missing)"
         ),
@@ -154,7 +158,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "무조건적 동조(Sycophancy) 및 거짓 전제 방어 (Anti-Sycophancy Guardrail)",
         "source": "LLM Sycophancy & Premise Validation Research",
         "question": (
-            "Does the [Target Prompt] avoid demanding blind sycophancy ('always agree 100% with the user') and "
+            "Does the [target_prompt] avoid demanding blind sycophancy ('always agree 100% with the user') and "
             "ensure the model maintains factual objectivity when the user's premise is wrong? "
             "(Yes = objective & safe, No = demands unconditional agreement or lacks guardrail)"
         ),
@@ -185,7 +189,7 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "주의력 희석(Lost in the Middle) & 과잉 페르소나 방지 (Attention Budget & Persona Diet)",
         "source": "Lost-in-the-Middle & Instruction Attenuation Research",
         "question": (
-            "Is the [Target Prompt] free from unnecessary theatrical persona backstory (e.g., childhood dreams, "
+            "Is the [target_prompt] free from unnecessary theatrical persona backstory (e.g., childhood dreams, "
             "fictional nicknames) and organized cleanly so critical constraints are not diluted? "
             "(Yes = lean persona & organized attention budget, No = theatrical backstory bloat or ungrouped wall)"
         ),
@@ -200,9 +204,10 @@ CRITERIA_SPECS: List[Dict[str, str]] = [
         "name": "매체 호흡 & 추론 단계 적합성 (Modality & Reasoning Fit)",
         "source": "Anthropic Extended Thinking & Medium-Specific Prompting",
         "question": (
-            "Do the communication style, length constraints, and decision steps in the [Target Prompt] fit the "
-            "target medium and task complexity coherently without fighting the medium's natural register? "
-            "(Yes = coherent modality & reasoning steps, No = mismatched register or missing decision steps)"
+            "Do the workflow steps, output format, and length/style constraints in [target_prompt] coherently "
+            "match the target execution medium (such as CLI/IDE agent execution, structured report, or chat) "
+            "and provide clear step-by-step decision sequencing? "
+            "(Yes = coherent medium fit & explicit decision steps, No = mismatched medium or missing steps)"
         ),
         "fix_guide": (
             "타겟 채널(메신저 단문 대화 vs 공식 보고서)의 실제 호흡에 맞게 문장 길이·어조 제약을 맞추고, "
@@ -220,14 +225,38 @@ class PromptAuditor:
         self.model = os.environ.get("TYPESAFE_MODEL", "jev-latest")
         self.endpoint = "https://api.typesafe.ai/v1/systemone"
 
+
+    @staticmethod
+    def _scan_companion_code_overfitting(target_key: Optional[str]) -> List[str]:
+        """If auditing a SKILL.md file, scan sibling engine/*.py & scripts/*.py for hardcoded domain dictionaries or symbol blacklists."""
+        if not target_key:
+            return []
+        p = Path(target_key)
+        if not p.is_file() or p.name.upper() != "SKILL.MD":
+            return []
+        skill_dir = p.parent
+        warnings: List[str] = []
+        overfit_var_re = re.compile(
+            r"^\s*([A-Z][A-Z0-9_]*(?:SYNONYM|TRIVIAL|LOW_SIGNAL|BLACKLIST|SKIP_HEADING|HARDCODED)[A-Z0-9_]*)\s*[:=]",
+            re.MULTILINE,
+        )
+        for py_file in sorted(skill_dir.rglob("*.py")):
+            try:
+                code = py_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            for m in overfit_var_re.finditer(code):
+                warnings.append(f"{py_file.relative_to(skill_dir)}:{m.group(1)}")
+        return warnings
+
     @staticmethod
     def _extract_rules(prompt_text: str) -> List[Dict[str, Any]]:
         """Extract behavioral rules (skipping code blocks and non-rule reference/schema tags)."""
         rules = []
         in_code_block = False
         in_ignored_tag = False
-        ignored_open = re.compile(r"^<(output_format|cli_reference|audit_criteria_12|examples)>", re.IGNORECASE)
-        ignored_close = re.compile(r"^</(output_format|cli_reference|audit_criteria_12|examples)>", re.IGNORECASE)
+        ignored_open = re.compile(r"^<(output_format|cli_reference|audit_criteria_12|examples|priority_hierarchy|reasoning_steps)>", re.IGNORECASE)
+        ignored_close = re.compile(r"^</(output_format|cli_reference|audit_criteria_12|examples|priority_hierarchy|reasoning_steps)>", re.IGNORECASE)
         for idx, raw_line in enumerate(prompt_text.splitlines(), start=1):
             stripped = raw_line.strip()
             if stripped.startswith("```"):
@@ -243,7 +272,7 @@ class PromptAuditor:
                 continue
             if in_ignored_tag or not stripped:
                 continue
-            if re.match(r"^([-*•]|\d+[.)])\s+", stripped) and len(stripped) >= 8:
+            if re.match(r"^([-*•]|\d+[.)])\s+", stripped) and len(stripped) >= 12 and not stripped.endswith(":"):
                 rules.append({"line": idx, "text": stripped})
         return rules
 
@@ -267,7 +296,8 @@ class PromptAuditor:
         )
         xml_or_headers = re.findall(r"(<[a-zA-Z0-9_-]+>|^#{1,4}\s+.+)", prompt_text, flags=re.MULTILINE)
 
-        neg_matches = neg_pattern.findall(prompt_text)
+        prompt_without_meta = re.sub(r"<audit_criteria_12>[\s\S]*?</audit_criteria_12>", "", prompt_text)
+        neg_matches = neg_pattern.findall(prompt_without_meta)
         pos_matches = pos_fallback_pattern.findall(prompt_text)
         # Exclude meta-examples where vague words are quoted as examples of what NOT to use
         scrubbed_for_vague = re.sub(r"['\"`][^'\"`\n]{1,50}['\"`]\s*(같은|등의|식의|류의|대신)", "", prompt_text)
@@ -288,7 +318,7 @@ class PromptAuditor:
         prompt_text: str,
         failed_case: Optional[str] = None,
         task_goal: Optional[str] = None,
-        pass_threshold: float = 0.55,
+        pass_threshold: float = 0.80,
         target_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -301,6 +331,8 @@ class PromptAuditor:
         t0 = time.perf_counter()
         rules = self._extract_rules(prompt_text)
         static_signals = self._analyze_static_signals(prompt_text, rules)
+        companion_overfit = self._scan_companion_code_overfitting(target_key)
+        static_signals["companion_code_overfit_vars"] = companion_overfit
 
         state_payload: Dict[str, Any] = {
             "target_prompt": prompt_text.strip(),
@@ -333,8 +365,11 @@ class PromptAuditor:
             questions[f"rule_{i}_general"] = {
                 "type": "noul",
                 "instructions": (
-                    f"Evaluate rule #{i+1}: \"{r_text}\". Is this rule a universal, generalizable principle "
-                    f"rather than a narrow post-hoc band-aid or literal test-case patch? (Yes = general, No = overfitted)"
+                    f"Evaluate rule #{i+1} in the context of [target_prompt]: \"{r_text}\". "
+                    f"Is this rule a generalizable, domain-agnostic operational rule for this tool/agent "
+                    f"(note: referencing the tool's own CLI flags/JSON schema is valid) rather than a narrow band-aid "
+                    f"hardcoding a specific external repository, domain business term, or failed test literal? "
+                    f"(Yes = generalizable operational rule, No = overfitted to a specific test/repo)"
                 ),
             }
             questions[f"rule_{i}_constructive"] = {
@@ -382,6 +417,8 @@ class PromptAuditor:
             score = round(float(answers.get(cid, {}).get("noul", 0.5)), 2)
 
             # Combine with deterministic static signals where appropriate
+            if cid == "overfitting_and_bandaids" and static_signals.get("companion_code_overfit_vars"):
+                score = min(score, 0.40)
             if cid == "literal_leakage_and_fewshot_bias" and failed_case:
                 leak_score = round(float(answers.get("no_failed_case_leak", {}).get("noul", 0.5)), 2)
                 score = min(score, leak_score)
@@ -439,7 +476,7 @@ class PromptAuditor:
         passed_count = sum(1 for d in dimension_results if d["passed"])
         total_dims = len(dimension_results)
 
-        status_str = "PASS" if (passed_count >= 10 and not flagged_rules) else "NEEDS_REVISION"
+        status_str = "PASS" if (passed_count == total_dims and not flagged_rules) else "NEEDS_REVISION"
         ram_delta = None
         if _SHM is not None:
             shm_key = f"audit:prev:{target_key or 'inline'}"
