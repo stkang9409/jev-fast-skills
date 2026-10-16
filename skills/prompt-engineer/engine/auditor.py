@@ -425,16 +425,27 @@ class PromptAuditor:
             if cid == "overfitting_and_bandaids" and static_signals.get("companion_code_overfit_vars"):
                 score = min(score, 0.40)
             if cid == "literal_leakage_and_fewshot_bias" and failed_case:
-                fc_tokens = {
-                    t for t in re.findall(r"[a-zA-Z0-9_가-힣]{2,}", failed_case.lower())
-                    if t not in {"그리고", "또는", "대신", "바로", "읽기", "위치", "코드", "파일", "함수", "할", "수", "있는", "없는", "있는지", "경우"}
+                generic_terms = {
+                    "그리고", "또는", "대신", "바로", "읽기", "위치", "코드", "파일", "함수",
+                    "핵심", "모듈", "호출", "진입", "오류", "상수", "문자열", "관계", "목록",
                 }
+                fc_tokens = [
+                    t for t in re.findall(r"[a-zA-Z0-9_가-힣]{3,}", failed_case.lower())
+                    if t not in generic_terms
+                ]
+                fc_bigrams = [
+                    f"{w1} {w2}"
+                    for w1, w2 in zip(
+                        re.findall(r"[a-zA-Z0-9_가-힣]{2,}", failed_case.lower()),
+                        re.findall(r"[a-zA-Z0-9_가-힣]{2,}", failed_case.lower())[1:],
+                    )
+                ]
                 prompt_low = prompt_text.lower()
-                matched_fc = [t for t in fc_tokens if t in prompt_low]
-                overlap_ratio = len(matched_fc) / max(len(fc_tokens), 1)
-                if len(matched_fc) >= 4 or overlap_ratio >= 0.25:
+                matched_fc = {t for t in fc_tokens if t in prompt_low}
+                matched_bg = {bg for bg in fc_bigrams if bg in prompt_low}
+                if len(matched_fc) >= 3 or len(matched_bg) >= 2:
                     leak_score = round(float(answers.get("no_failed_case_leak", {}).get("noul", 0.5)), 2)
-                    det_penalty = round(max(0.35, 1.0 - overlap_ratio * 1.4), 2)
+                    det_penalty = round(max(0.35, 0.85 - (len(matched_fc) * 0.08 + len(matched_bg) * 0.12)), 2)
                     score = min(score, leak_score, det_penalty)
             elif cid == "concrete_testable_language" and static_signals["vague_expressions_found"]:
                 score = min(score, 0.35)
