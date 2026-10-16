@@ -42,9 +42,11 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
 </cli_reference>
 
 <output_format>
-표준출력(stdout)으로 디렉터리별 파일·심볼·정확한 시작~끝 라인 범위(`L시작-L끝`)가 간결한 마크다운 목록 스키마로 출력됩니다:
+표준출력(stdout)은 다음 엄밀한 마크다운 스키마와 경계 조건(파일당 최대 4개 심볼, 전체 최대 24개 파일·75개 심볼 상한)을 준수하여 출력됩니다:
+- **필수 섹션 헤더 (`string`)**: `## <탐색_디렉터리_상대경로>` (문자열, 디렉터리별 1회 출력)
+- **파일 및 심볼 행 (`string`)**: `- <상대_파일_경로>: \`<심볼명>\` L<시작_라인:int>-L<끝_라인:int>` (1-indexed 정수 라인 범위 필수 표기)
 ```markdown
-## <디렉터리_경로>
-- <상대_파일_경로>: `<심볼명_1>` L시작-L끝, `<심볼명_2>` L시작-L끝
+## <dir_path:string>
+- <rel_file_path:string>: `<symbol_name:string>` L<start_line:int>-L<end_line:int>, `<symbol_name_2:string>` L<start_line:int>-L<end_line:int>
 ```
 </output_format>

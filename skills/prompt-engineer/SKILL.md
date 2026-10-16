@@ -57,11 +57,27 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
 </cli_reference>
 
 <output_format>
-감사 결과는 다음 6개 핵심 필드를 포함한 정형 리포트(또는 `--json` 사용 시 단일 JSON 객체)로 출력됩니다:
-- `status`: `PASS` (12개 전 차원 `>= 0.80` 통과 및 결함 규칙 `0건`) 또는 `NEEDS_REVISION`
-- `health_score`: 12대 차원 평균 점수 (`0~100`) 및 실행 소요 시간(`latency_ms`)
-- `ram_delta`: 내장 공유 메모리(`RequestMemory`) 기반 직전 감사 대비 점수 증감 및 해결/회귀 차원 목록
-- `static_signals`: 라인 수, 규칙 수, 부정어/긍정 대안 수, 섹션 태그 수, 모호 표현 및 동반 코드 과적합 변수 목록
-- `dimensions`: 12대 기준별 `PASS`/`FAIL`, 신뢰도 점수(`0.00~1.00`), 미통과 시 구체적 교정 처방(`fix_guide`)
-- `flagged_rules`: 과적합(`< 0.80`) 또는 대안 부재(`< 0.80`)로 적발된 개별 규칙의 라인 번호와 사유
+감사 결과는 다음 타입과 경계 조건이 엄밀히 정의된 6개 필수 필드의 정형 리포트 및 JSON 스키마로 출력됩니다:
+```json
+{
+  "status": "PASS | NEEDS_REVISION (string, 12/12 전 차원 >= 0.80 및 flagged_rules == 0일 때만 PASS)",
+  "health_score": "0~100 (int, 12개 차원 평균 백분율 점수)",
+  "passed_dimensions": ""<통과수>/12" (string)",
+  "latency_ms": "float (실행 소요 밀리초)",
+  "static_signals": {
+    "line_count": "int",
+    "extracted_rule_count": "int",
+    "negative_marker_count": "int",
+    "positive_fallback_marker_count": "int",
+    "vague_expressions_found": "string[]",
+    "companion_code_overfit_vars": "string[]"
+  },
+  "dimensions": [
+    {"id": "string", "score": "0.00~1.00 (float)", "passed": "boolean (score >= 0.80)", "fix_guide": "string"}
+  ],
+  "flagged_rules": [
+    {"line": "int (1-indexed)", "rule": "string", "general_score": "float", "constructive_score": "float", "issues": "string[]"}
+  ]
+}
+```
 </output_format>
