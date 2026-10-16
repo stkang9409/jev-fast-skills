@@ -1,0 +1,6 @@
+{
+  "name": "jev-fast-skills",
+  "version": "1.0.0",
+  "description": "TypeSafe Jev Fast Skills Suite (fast-context, fast-memory, fast-browser, prompt-engineer) for Claude Code & Antigravity.",
+  "skills": "./skills/"
+}

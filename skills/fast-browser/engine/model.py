@@ -1,0 +1,216 @@
+"""TypeSafe Jev makes choices; slots or Antigravity supplies text."""
+
+import json
+import math
+import os
+import time
+from pathlib import Path
+import httpx
+from dotenv import load_dotenv
+
+from .questions import NEXT_ACTION, TARGET
+
+# Load .env if present
+load_dotenv(dotenv_path=Path(__file__).resolve().parents[3] / ".env")
+load_dotenv(dotenv_path=Path.home() / ".gemini" / ".env")
+load_dotenv()
+
+CLIENT = httpx.Client(http2=True, timeout=25)
+
+
+def post_json(url, key, body):
+    for attempt in range(3):
+        try:
+            response = CLIENT.post(url, json=body, headers={"Authorization": f"Bearer {key}"})
+        except httpx.HTTPError:
+            raise RuntimeError("Model connection failed; no action executed.") from None
+        if response.status_code in {429, 529, 503} and attempt < 2:
+            time.sleep(0.5 * 2**attempt)
+            continue
+        if response.is_error:
+            raise RuntimeError(f"Model provider returned HTTP {response.status_code}: {response.text}")
+        return response.json()
+    raise RuntimeError("Model unavailable")
+
+
+def validate_choice(answer, ids):
+    try:
+        probabilities = answer["probabilities"]
+        numbers = [*probabilities.values(), answer["confidence"]]
+        valid = (
+            answer["choice"] in ids
+            and set(probabilities) == set(ids)
+            and all(type(n) in (int, float) and math.isfinite(n) and 0 <= n <= 1 for n in numbers)
+            and abs(sum(probabilities.values()) - 1) < 0.02
+            and probabilities[answer["choice"]] >= max(probabilities.values()) - 1e-6
+        )
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError(f"Invalid TypeSafe response for ids {ids}: {answer}")
+    return answer
+
+
+def action_space(actions):
+    """One index per observed element; each operation has its own valid target choices."""
+    elements, indices, targets, controls = [], {}, {}, {}
+    operations = {"click": "CLICK", "fill": "TYPE_TEXT", "select": "SELECT"}
+    for action in actions:
+        kind = action["kind"]
+        if kind not in operations:
+            controls[action["id"].upper()] = action
+            continue
+        node = action["node"]
+        if node not in indices:
+            index = str(len(elements) + 1)
+            indices[node] = index
+            element = {k: action[k] for k in ("role", "value", "checked", "selected", "expanded") if k in action}
+            element.update(index=index, label=action["label"].split(" → ")[0], operations=[])
+            if kind == "select":
+                element["value"] = action.get("current_value", "")
+                element["options"] = []
+            elements.append(element)
+        index = indices[node]
+        operation = operations[kind]
+        group = targets.setdefault(operation, {})
+        element = elements[int(index) - 1]
+        if operation not in element["operations"]:
+            element["operations"].append(operation)
+        target = index
+        if kind == "select":
+            target = f"{index}:{len(element['options']) + 1}"
+            element["options"].append({"index": target, "label": action["label"], "value": action["value"]})
+        group[target] = action
+    return elements, targets, controls
+
+
+def choose(state, goal, history):
+    elements, targets, controls = action_space(state["actions"])
+    labels = {
+        "CLICK": "Click an element, button, menu option, autocomplete suggestion, or calendar day.",
+        "TYPE_TEXT": "Enter or replace text in an editable field.",
+        "SELECT": "Select an observed dropdown value.",
+    }
+    operations = {key: labels[key] for key in targets}
+    operations.update({key: value["label"] for key, value in controls.items()})
+    operations.update(DONE="Every requirement is visibly satisfied.", BLOCKED="No supported operation can progress.")
+    questions = {
+        "operation": {"type": "choice", "criteria": operations, "instructions": {"goal": goal, "rules": NEXT_ACTION}}
+    }
+    for operation, candidates in targets.items():
+        questions[operation.lower() + "_target"] = {
+            "type": "choice",
+            "criteria": {
+                index: {
+                    "element": f"[{index}] {a['label']}",
+                    "current_value": a.get("current_value", a.get("value", "")),
+                    **{k: a[k] for k in ("role", "checked", "selected", "expanded") if k in a},
+                }
+                for index, a in candidates.items()
+            },
+            "instructions": {"goal": goal, "operation": operation, "rules": [NEXT_ACTION, TARGET]},
+        }
+    body = {
+        "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+        "state": {
+            "page": {k: state[k] for k in ("url", "title", "text")},
+            "elements": elements,
+            "recent_actions": [
+                {k: h.get(k) for k in ("action", "kind", "text", "page_changed")} for h in history[-10:]
+            ],
+        },
+        "questions": questions,
+    }
+    started = time.perf_counter()
+    api_key = os.environ.get("TYPESAFE_API_KEY")
+    if not api_key:
+        raise ValueError("TYPESAFE_API_KEY is not set in environment or .env file.")
+    result = post_json("https://api.typesafe.ai/v1/systemone", api_key, body)
+    operation_answer = validate_choice(result["answers"].get("operation", {}), operations)
+    operation = operation_answer["choice"]
+    target = None
+    target_answer = None
+    probabilities = {}
+    if operation in targets:
+        target_answer = validate_choice(result["answers"].get(operation.lower() + "_target", {}), targets[operation])
+        target = target_answer["choice"]
+        choice = targets[operation][target]["id"]
+        probabilities = {a["id"]: target_answer["probabilities"][index] for index, a in targets[operation].items()}
+    else:
+        choice = controls[operation]["id"] if operation in controls else operation
+        probabilities[choice] = operation_answer["probabilities"][operation]
+    return {
+        "choice": choice,
+        "operation": operation,
+        "target": target,
+        "confidence": operation_answer["confidence"],
+        "probabilities": probabilities,
+        "operation_probabilities": operation_answer["probabilities"],
+        "target_probabilities": target_answer["probabilities"] if target_answer else {},
+        "target_confidence": target_answer["confidence"] if target_answer else None,
+        "raw_answers": result["answers"],
+        "model": result["model"],
+        "usage": result.get("usage", {}),
+        "latency_ms": round((time.perf_counter() - started) * 1000),
+        "request": body,
+    }
+
+
+def field_context(goal, action, page, history):
+    return {
+        "goal": goal,
+        "field": {k: action.get(k) for k in ("label", "role", "value")},
+        "page": {"title": page["title"], "text": page["text"][:6000]},
+        "recent_actions": [{k: h.get(k) for k in ("action", "text")} for h in history[-6:]],
+    }
+
+
+def field_text(context, slots=None, direct_text=None):
+    """Resolve text to type into field: direct text, slot matching, or return None for Antigravity handoff."""
+    if direct_text is not None:
+        return direct_text, {"model": "antigravity_direct", "latency_ms": 0}
+
+    if slots and isinstance(slots, dict):
+        field_label = (context.get("field", {}).get("label") or "").lower()
+        # Direct keyword match
+        for k, v in slots.items():
+            if k.lower() in field_label or field_label in k.lower():
+                return str(v), {"model": "slot_exact_match", "latency_ms": 0}
+
+        # Jev Choice over slots with explicit NONE_HANDOFF option so unrelated fields trigger NEED_TEXT
+        if len(slots) >= 1:
+            try:
+                criteria = {k: f"Slot '{k}' with value: {v}" for k, v in slots.items()}
+                criteria["__NONE_HANDOFF__"] = (
+                    "None of the provided slots match this input field; "
+                    "pause and hand off to the user/agent to write custom text."
+                )
+                body = {
+                    "model": os.environ.get("TYPESAFE_MODEL", "jev-latest"),
+                    "state": {
+                        "goal": context["goal"],
+                        "field": context["field"],
+                        "page_title": context["page"]["title"],
+                    },
+                    "questions": {
+                        "slot": {
+                            "type": "choice",
+                            "instructions": (
+                                "Which provided slot strictly matches this input field? "
+                                "If the field asks for something not in the slots (e.g. a detailed message, "
+                                "refund reason, or different field), choose __NONE_HANDOFF__."
+                            ),
+                            "criteria": criteria,
+                        }
+                    },
+                }
+                api_key = os.environ.get("TYPESAFE_API_KEY")
+                res = post_json("https://api.typesafe.ai/v1/systemone", api_key, body)
+                choice_val = res["answers"]["slot"]["choice"]
+                if choice_val != "__NONE_HANDOFF__" and choice_val in slots:
+                    return str(slots[choice_val]), {"model": "jev_slot_choice", "latency_ms": 0}
+            except Exception:
+                pass
+
+    # No pre-configured text: signal Antigravity handoff
+    return None, None

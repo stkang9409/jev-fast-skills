@@ -1,0 +1,14 @@
+{
+  "name": "jev-fast-skills-marketplace",
+  "owner": {
+    "name": "stkang9409"
+  },
+  "plugins": [
+    {
+      "name": "jev-fast-skills",
+      "source": "./",
+      "description": "TypeSafe Jev 4 Core Fast Skills (fast-context, fast-memory, fast-browser, prompt-engineer)",
+      "version": "1.0.0"
+    }
+  ]
+}
