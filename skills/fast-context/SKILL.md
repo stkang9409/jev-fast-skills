@@ -51,5 +51,7 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
 - [Module Map (Other Files)]: `<other_file:string>` (<exported_symbol:string> L<start:int>-L<end:int>)
 ## Entry Chains (IPC / API → Handler → Bridge → UI)
 - `'<channel_or_route:string>'` → handler: <file:string>:L<start:int>-L<end:int> (`<callee:string>`) → preload: <file:string>:L<line:int> (`<bridge:string>`) → ui: <file:string>:L<line:int>
+## DB / Repository Links
+- <repo_file:string>: `<method:string>` L<start:int>-L<end:int> [← <caller_file:string>:L<line:int>] | SQL: <table_or_query:string>
 ```
 </output_format>
