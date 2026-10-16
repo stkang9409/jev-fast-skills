@@ -62,6 +62,7 @@ if [ ! -f "$HOME/.gemini/.env" ] || ! grep -q "TYPESAFE_API_KEY=" "$HOME/.gemini
   fi
 fi
 
+ln -sfn "$PLUGIN_DIR/skills/fast-context/scripts/fc-hint.sh" "$HOME/.claude/skills/fc-hint.sh"
 echo "✅ Installation complete!"
 echo "   - Antigravity Plugin : $AGY_PLUGIN_DIR"
 echo "   - Claude Code Skills : $CLAUDE_SKILLS_DIR/{fast-context,fast-browser,prompt-engineer}"

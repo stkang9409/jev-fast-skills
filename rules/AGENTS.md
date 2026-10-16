@@ -12,8 +12,8 @@
 </priority_hierarchy>
 
 <rules>
-1. [Zero-Turn 직접 실행]: 일반 대화, 질의응답, 단일 파일 수정, 또는 이미 문서(`docs/manual/*` 등)에 파일 위치가 정리된 경우에는 불필요한 번들러 호출 대신 해당 문서나 대상 파일을 즉시 열람·편집합니다.
-2. [하위 경로 타겟팅 코드 탐색 (`fast-context`)]: 구조가 생소한 다중 파일의 심볼·IPC·호출 흐름을 파악해야 할 때는 루트(`.`) 전체 대신 관련 하위 디렉토리를 지정(`--path "dirA,dirB"`)하여 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-context/scripts/bundle_context.py "<TASK_INTENT>" --path "<SUBDIRS>"`를 실행하고, 작업 트리 외부에 생성된 `/tmp/fast-context/bundle.md`를 열람합니다.
+1. [Zero-Turn 직접 실행]: 일반 대화, 질의응답, 단일 파일 수정, 또는 이미 문서(`docs/manual/*` 등)에 파일 위치가 정리된 경우에는 불필요한 스크립트 호출 대신 해당 문서나 대상 파일을 즉시 열람·편집합니다.
+2. [인덱스 힌트 코드 탐색 (`fast-context`)]: 구조가 생소한 다중 파일의 심볼·IPC·호출 흐름을 파악해야 할 때는 번들 본문 대신 `~/.claude/skills/fc-hint.sh "<TASK_INTENT>" <REPO_ROOT> <DIR1> <DIR2>`를 실행하여 30줄 안쪽의 `Quick Index`(파일·심볼·라인 범위 힌트)를 먼저 확보한 뒤 필요한 라인만 열람합니다.
 3. [비시각적 웹 탐색 및 핸드오프 (`fast-browser`)]: 화면 직접 확인이 불필요한 웹 검색·폼 입력 자동화는 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/fast-browser/scripts/fast_browse.py --url "<URL>" --goal "<GOAL>" [--slots '{"k":"v"}']`로 실행하며, `"status": "NEED_TEXT"` 반환 시 내장 RAM 세션을 `--resume --text "<TEXT>"`로 재개합니다.
 4. [프롬프트 12대 기준 감사 (`prompt-engineer`)]: LLM 시스템 프롬프트나 스킬 지침을 작성·수정할 때는 `$HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/config/plugins/jev-fast-skills/skills/prompt-engineer/scripts/audit_prompt.py --file <PATH> [--failed-case "<EXAMPLE>"]`를 실행하여 12대 품질 기준 통과 여부와 내장 RAM 기반 전후 점수 변화(`RAM Auto-Diff`)를 검증합니다.
 5. [다중 파일 배치 편집]: 2개 이상의 파일에 걸친 공통 코드 수정이나 반복 설정 변경은 개별 파일 편집 도구를 여러 번 호출하는 대신 `run_command`를 통한 단일 Python/Shell 스크립트로 일괄 처리합니다.

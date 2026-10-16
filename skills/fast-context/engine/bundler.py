@@ -1,10 +1,83 @@
-"""Repomix-style Markdown bundler for semantic code blocks."""
+"""Quick Index Hint and Repomix-style Markdown bundler for semantic code blocks."""
 
-import time
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Optional
 
 from .parser import CodeBlock
+
+
+def build_hint(
+    scored_blocks: List[Tuple[CodeBlock, float]],
+    repo_root: Path,
+    dir_groups: Optional[List[Tuple[str, Path]]] = None,
+    include_links: bool = False,
+) -> str:
+    """
+    Build a compact Index-Only Hint (1 line per file: `- rel/path: `sym1` L10-L45, `sym2` L50-L90`).
+    No bundle code body is emitted, keeping output within ~20-35 lines while preserving wide file recall.
+    """
+    root = repo_root.resolve()
+
+    # Group blocks by resolved file path, preserving max file score for ordering
+    by_file: Dict[Path, List[Tuple[CodeBlock, float]]] = {}
+    file_max_score: Dict[Path, float] = {}
+    for blk, sc in scored_blocks:
+        fp = blk.file_path.resolve()
+        by_file.setdefault(fp, []).append((blk, sc))
+        if sc > file_max_score.get(fp, 0.0):
+            file_max_score[fp] = sc
+
+    for fp in by_file:
+        by_file[fp].sort(key=lambda x: x[0].start_line)
+
+    def format_file_line(fp: Path, items: List[Tuple[CodeBlock, float]]) -> str:
+        try:
+            rel_path = str(fp.relative_to(root))
+        except ValueError:
+            rel_path = str(fp)
+        syms_str = ", ".join(f"`{b.name}` L{b.start_line}-L{b.end_line}" for b, _ in items)
+        if include_links:
+            return f"- [{rel_path}](file://{fp}): {syms_str}"
+        return f"- {rel_path}: {syms_str}"
+
+    if not dir_groups:
+        sorted_files = sorted(by_file.keys(), key=lambda p: file_max_score[p], reverse=True)
+        return "\n".join(format_file_line(fp, by_file[fp]) for fp in sorted_files)
+
+    # Assign each file to the MOST specific matching directory group (longest path prefix)
+    resolved_groups = [(label, gpath.resolve()) for label, gpath in dir_groups]
+    group_buckets: Dict[str, List[Path]] = {label: [] for label, _ in resolved_groups}
+    unassigned: List[Path] = []
+
+    for fp in sorted(by_file.keys(), key=lambda p: file_max_score[p], reverse=True):
+        best_label = None
+        best_depth = -1
+        for label, gpath in resolved_groups:
+            if fp == gpath or gpath in fp.parents:
+                depth = len(gpath.parts)
+                if depth > best_depth:
+                    best_depth = depth
+                    best_label = label
+        if best_label is not None:
+            group_buckets[best_label].append(fp)
+        else:
+            unassigned.append(fp)
+
+    out_lines: List[str] = []
+    for label, _ in resolved_groups:
+        fps = group_buckets.get(label, [])
+        if not fps:
+            continue
+        out_lines.append(f"## {label}")
+        for fp in fps:
+            out_lines.append(format_file_line(fp, by_file[fp]))
+
+    if unassigned:
+        out_lines.append("## other")
+        for fp in unassigned:
+            out_lines.append(format_file_line(fp, by_file[fp]))
+
+    return "\n".join(out_lines)
 
 
 def build_bundle(
@@ -16,23 +89,17 @@ def build_bundle(
     compact_stdout: bool = True,
     max_stdout_chars: int = 24000,
 ) -> str:
-    """Format filtered code blocks into a single consolidated Repomix-style Markdown document.
-    When compact_stdout=True, budgets total output to <= max_stdout_chars so Antigravity's
-    run_command (~8KB tail window) never truncates the top Quick Index or highest-scored blocks.
-    """
+    """Format filtered code blocks into a single consolidated Markdown document."""
     root = base_dir.resolve()
 
-    # If compact_stdout is enabled, select top-scoring blocks that fit within max_stdout_chars
     active_blocks = scored_blocks
     omitted_blocks: List[Tuple[CodeBlock, float]] = []
     if compact_stdout and scored_blocks:
-        # Sort by descending score first to prioritize highest relevance within stdout budget
         sorted_by_score = sorted(scored_blocks, key=lambda x: x[1], reverse=True)
         selected = []
-        est_chars = 900  # Reserve space for header + Quick Index + footer
+        est_chars = 900
         for blk, sc in sorted_by_score:
             blk_lines = blk.content.splitlines()
-            # Cap extremely long single blocks in stdout mode to 65 lines so multiple top blocks fit
             preview_lines = blk_lines[:65] if len(blk_lines) > 70 else blk_lines
             blk_cost = sum(len(l) + 10 for l in preview_lines) + 180
             if est_chars + blk_cost <= max_stdout_chars or not selected:
@@ -42,7 +109,6 @@ def build_bundle(
                 omitted_blocks.append((blk, sc))
         active_blocks = selected
 
-    # Group active blocks by file
     blocks_by_file: Dict[str, List[Tuple[CodeBlock, float]]] = {}
     for block, score in active_blocks:
         try:
@@ -51,7 +117,6 @@ def build_bundle(
             rel_path = str(block.file_path)
         blocks_by_file.setdefault(rel_path, []).append((block, score))
 
-    # Also build full index across ALL scored_blocks so Quick Index is always 100% complete
     all_by_file: Dict[str, List[Tuple[CodeBlock, float]]] = {}
     for block, score in scored_blocks:
         try:
@@ -62,7 +127,6 @@ def build_bundle(
     for rel_path in all_by_file:
         all_by_file[rel_path].sort(key=lambda x: x[0].start_line)
 
-    # Sort blocks within each file by start_line
     for rel_path in blocks_by_file:
         blocks_by_file[rel_path].sort(key=lambda x: x[0].start_line)
 
@@ -125,7 +189,7 @@ def build_bundle(
                     for offset, line_text in enumerate(shown_lines)
                 ]
                 numbered_content.append(
-                    f" ... | [+{len(block_lines) - 65} more lines up to L{block.end_line} in .context/bundle.md]"
+                    f" ... | [+{len(block_lines) - 65} more lines up to L{block.end_line}]"
                 )
             else:
                 numbered_content = [
@@ -140,12 +204,5 @@ def build_bundle(
 
         lines.append("---")
         lines.append("")
-
-    if compact_stdout and omitted_blocks:
-        lines.append(
-            f"> 💡 **Stdout Budget Note**: Top {len(active_blocks)} highest-scoring blocks shown inline above "
-            f"(zero truncation). All {len(scored_blocks)} full blocks are saved in `.context/bundle.md` "
-            f"(use `view_file` on `.context/bundle.md` if you need the remaining {len(omitted_blocks)} lower-scoring blocks)."
-        )
 
     return "\n".join(lines)
