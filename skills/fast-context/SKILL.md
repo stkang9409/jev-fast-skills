@@ -6,7 +6,7 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 # Fast Context (Wide-Recall Quick Index Hint Locator)
 
 <role>
-다중 디렉터리 코드베이스에서 작업 의도(Task Intent)와 관련된 핵심 소스 파일·심볼(함수, 클래스, 메서드)·설계 문서(`docs/`) 섹션을 다국어 시맨틱 평가로 탐색하여, 에디터/CLI 환경에 적합한 **25~30줄 내외의 `Quick Index` 위치 힌트(`파일경로: 심볼명 L시작-L끝`)**로 반환하는 코드 위치 탐색 도구입니다.
+다중 디렉터리 코드베이스에서 작업 의도(Task Intent)와 관련된 핵심 소스 파일·심볼(함수, 클래스, 메서드)·설계 문서(`docs/`) 섹션을 다국어 시맨틱 평가로 탐색하여, 에디터/CLI 환경에 적합한 **간결한 `Quick Index` 위치 힌트(`파일경로: 심볼명 L시작-L끝`)**로 반환하는 코드 위치 탐색 도구입니다.
 </role>
 
 <priority_hierarchy>
@@ -24,7 +24,7 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 </reasoning_steps>
 
 <rules>
-1. [위치 인덱스 중심 탐색]: 다중 디렉터리 탐색 시 전체 파일 본문을 한꺼번에 출력하는 대신, `<cli_reference>`의 `fc-hint.sh`로 표준출력(stdout) `Quick Index` 위치 목록(25~30줄 내외)만 추출하여 필요한 구간만 `view_file`로 읽습니다.
+1. [위치 인덱스 중심 탐색]: 다중 디렉터리 탐색 시 전체 파일 본문을 한꺼번에 출력하는 대신, `<cli_reference>`의 `fc-hint.sh`로 표준출력(stdout)으로 `Quick Index` 위치 목록을 추출하여 필요한 구간만 `view_file`로 읽습니다.
 2. [다중 디렉터리 단일 배치 호출]: 연관된 여러 모듈 디렉터리를 탐색할 때는 디렉터리마다 개별 탐색 명령을 반복 실행하는 대신 단일 호출에 대상 경로들을 함께 전달하여 디렉터리별 인덱스를 한 번에 수집합니다.
 3. [근거 부재 시 재확인 및 유보 (Edge-Case & Anti-Sycophancy Fallback)]:
    - 인덱스 힌트 결과가 비어 있거나 질문에 대한 근거가 불충분할 때는 임의로 함수명·라인 번호를 추측하는 대신, 키워드를 조정해 `grep`으로 재확인하거나 확인 가능한 범위를 명시하여 사용자에게 추가 정보를 요청합니다.
@@ -33,7 +33,7 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 
 <cli_reference>
 ```bash
-# 1. 권장 사용법: 대상 디렉터리들의 Quick Index 위치 힌트 추출 (기본 임계치 0.60)
+# 1. 권장 사용법: 대상 디렉터리들의 Quick Index 위치 힌트 추출 
 ~/.claude/skills/fc-hint.sh "<TASK_INTENT>" <REPO_ROOT> <REL_DIR_1> <REL_DIR_2>
 
 # 2. bundle_context.py 직접 호출 (쉼표 구분 다중 경로 인덱스 힌트 출력)
@@ -42,7 +42,7 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
 </cli_reference>
 
 <output_format>
-표준출력(stdout)으로 디렉터리별 파일·심볼·정확한 시작~끝 라인 범위(`L시작-L끝`)가 25~30줄 내외의 마크다운 목록 스키마로 출력됩니다:
+표준출력(stdout)으로 디렉터리별 파일·심볼·정확한 시작~끝 라인 범위(`L시작-L끝`)가 간결한 마크다운 목록 스키마로 출력됩니다:
 ```markdown
 ## <디렉터리_경로>
 - <상대_파일_경로>: `<심볼명_1>` L시작-L끝, `<심볼명_2>` L시작-L끝
