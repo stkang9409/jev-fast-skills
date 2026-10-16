@@ -12,16 +12,16 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 <priority_hierarchy>
 코드 탐색 시 도구 선택 우선순위는 다음과 같습니다:
 1순위 (단일 파일·정확한 심볼 확인): 이미 정확한 파일 경로나 고유 심볼명을 알고 있다면 `view_file` 또는 `grep`/`rg`로 즉시 확인합니다.
-2순위 (초기 다중 디렉터리 인덱스 힌트 추출): 탐색 과제를 시작할 때 `fc-hint.sh`로 대상 디렉터리 3~4곳의 `Quick Index`만 뽑아(기준값 `0.60`, 번들 본문 미사용) 30줄 안쪽 위치 힌트를 확보합니다.
+2순위 (초기 다중 디렉터리 인덱스 힌트 추출): 탐색 과제를 시작할 때 `fc-hint.sh`로 관련 디렉터리들의 `Quick Index`만 뽑아(번들 본문 미사용) 30줄 안쪽 위치 힌트를 확보합니다.
 3순위 (원본 파일 라인 범위 직접 열람): 출력된 힌트의 정확한 `L시작-L끝` 범위를 보고 필요한 원본 파일만 `view_file`(`StartLine`~`EndLine`)로 즉시 열람합니다.
 </priority_hierarchy>
 
 <rules>
-1. [인덱스 힌트 전용 실행 (번들 본문 미사용)]: 탐색 과제를 시작할 때 `$HOME/.claude/skills/fc-hint.sh "<TASK_INTENT>" <REPO_ROOT> <DIR1> <DIR2> ...` (또는 `bundle_context.py "<TASK_INTENT>" --path "dir1,dir2" --hint`)를 실행하여 표준출력(stdout)으로 30줄 안쪽의 `Quick Index`만 바로 받아 사용하며, 토큰과 시간을 낭비하는 번들 코드 본문은 읽지 않습니다.
-2. [Wide-Recall 다중 경로 및 자동 문서 탐색]: 대상 디렉터리 3~4곳(예: `electron/claims packages/hira-claim-core/src components/claims electron`)을 함께 지정하면, 하위 디렉터리 중복이 자동 제거되고 저장소의 `docs/features`·`docs/manual` 내 관련 설계 문서까지 한 번에 인덱싱됩니다.
-3. [예외 및 엣지 케이스 처리 (Fallback)]:
-   - 기본적으로 테스트·픽스처(`.test.`, `fixtures/`, `.json`)는 자동 제외되며, 테스트 코드를 찾아야 할 때만 `--include-tests` 플래그를 추가합니다.
-   - 힌트 출력 후 세부 상수나 정규식 리터럴을 추가로 확인해야 할 때는 확보된 파일 범위를 대상으로 `grep`을 보조로 사용합니다.
+1. [인덱스 힌트 전용 실행 (번들 본문 미사용)]: 다중 디렉터리 탐색 과제를 시작할 때는 `<cli_reference>`의 `fc-hint.sh`를 실행하여 표준출력(stdout)으로 `Quick Index` 위치 목록만 받아 사용하며, 토큰과 시간을 소모하는 전체 코드 번들 본문은 읽지 않습니다.
+2. [Wide-Recall 다중 경로 및 자동 문서 탐색]: 탐색 대상 디렉터리들을 함께 지정하면 하위 디렉터리 중복이 자동 제거되고, 저장소의 `docs/features`·`docs/manual` 내 관련 설계 문서까지 한 번에 인덱싱됩니다.
+3. [예외 처리 및 환각 방어 (Edge-Case & Anti-Hallucination Fallback)]:
+   - 기본적으로 테스트·픽스처 파일은 자동 제외되며, 테스트 코드를 분석해야 할 때만 `--include-tests` 옵션을 활성화합니다.
+   - 인덱스 힌트 출력이 비어 있거나 원본 파일 열람 후에도 질문에 대한 사실 근거가 부족할 때는 임의로 함수명·라인 번호·동작을 추측(Hallucination)하여 답변하지 않고, `grep`으로 재확인하거나 확인 불가 사유를 명시하여 사용자에게 추가 정보를 요청합니다.
 </rules>
 
 <cli_reference>
