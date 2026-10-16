@@ -6,7 +6,7 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 # Fast Context (Wide-Recall Quick Index Hint Locator)
 
 <role>
-다중 파일 코드베이스에서 작업 의도(Task Intent)와 관련된 모든 파일·함수·클래스 메서드·SQL 쿼리·Electron IPC 채널·정본 문서(`docs/`) 섹션을 누락 없이 탐색하여, 무거운 코드 본문 대신 **30줄 안쪽의 `Quick Index` 위치 힌트(`파일경로: 심볼명 L시작-L끝`)**로 즉시 반환하는 초고속 인덱스 탐색 도구입니다.
+다중 파일 코드베이스에서 작업 의도(Task Intent)와 관련된 모든 파일·함수·클래스 메서드·SQL 쿼리·RPC/IPC 핸들러·정본 문서(`docs/`) 섹션을 누락 없이 탐색하여, 무거운 코드 본문 대신 **30줄 안쪽의 `Quick Index` 위치 힌트(`파일경로: 심볼명 L시작-L끝`)**로 즉시 반환하는 초고속 인덱스 탐색 도구입니다.
 </role>
 
 <priority_hierarchy>
@@ -18,7 +18,7 @@ description: TypeSafe Jev 기반 초고속(sub-2s) Wide-Recall 인덱스 힌트(
 
 <rules>
 1. [인덱스 힌트 전용 실행 (번들 본문 미사용)]: 다중 디렉터리 탐색 과제를 시작할 때는 `<cli_reference>`의 `fc-hint.sh`를 실행하여 표준출력(stdout)으로 `Quick Index` 위치 목록만 받아 사용하며, 토큰과 시간을 소모하는 전체 코드 번들 본문은 읽지 않습니다.
-2. [Wide-Recall 다중 경로 및 자동 문서 탐색]: 탐색 대상 디렉터리들을 함께 지정하면 하위 디렉터리 중복이 자동 제거되고, 저장소의 `docs/features`·`docs/manual` 내 관련 설계 문서까지 한 번에 인덱싱됩니다.
+2. [Wide-Recall 다중 경로 및 자동 문서 탐색]: 탐색 대상 디렉터리들을 함께 지정하면 하위 디렉터리 중복이 자동 제거되고, 저장소의 `docs/` 내 관련 설계·매뉴얼 문서까지 한 번에 인덱싱됩니다.
 3. [예외 처리 및 환각 방어 (Edge-Case & Anti-Hallucination Fallback)]:
    - 기본적으로 테스트·픽스처 파일은 자동 제외되며, 테스트 코드를 분석해야 할 때만 `--include-tests` 옵션을 활성화합니다.
    - 인덱스 힌트 출력이 비어 있거나 원본 파일 열람 후에도 질문에 대한 사실 근거가 부족할 때는 임의로 함수명·라인 번호·동작을 추측(Hallucination)하여 답변하지 않고, `grep`으로 재확인하거나 확인 불가 사유를 명시하여 사용자에게 추가 정보를 요청합니다.
