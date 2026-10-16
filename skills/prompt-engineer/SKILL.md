@@ -70,7 +70,7 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
     "negative_marker_count": "int",
     "positive_fallback_marker_count": "int",
     "vague_expressions_found": "string[]",
-    "companion_code_overfit_vars": "string[]"
+    "structural_section_count": "int"
   },
   "dimensions": [
     {"id": "string", "score": "0.00~1.00 (float)", "passed": "boolean (score >= 0.80)", "fix_guide": "string"}

@@ -43,6 +43,6 @@ $HOME/.gemini/config/plugins/jev-fast-skills/.venv/bin/python $HOME/.gemini/conf
 </cli_reference>
 
 <output_format>
-- 응답 구조: (1) 핵심 결론 요약(2~4문장 이내) -> (2) 변경 파일 및 검증 수치 표/목록 순서의 2단 GitHub Flavored Markdown 스키마로 작성합니다.
+- 응답 구조: 모든 답변은 (1) 핵심 결론 요약(2~4문장 이내) -> (2) 근거 상세(구현·검증 시 변경 파일 및 수치 표, 요구사항 확인 시 핵심 질문 목록) 순서의 2단 GitHub Flavored Markdown 스키마로 작성합니다.
 - 링크 규격: 언급하는 모든 파일 경로와 코드 심볼(함수, 클래스, 타입)은 `[심볼명](file:///절대/경로#L시작-L끝)` 형식의 클릭 가능한 마크다운 링크로 표기합니다.
 </output_format>
