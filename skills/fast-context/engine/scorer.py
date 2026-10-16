@@ -174,20 +174,22 @@ def score_symbols(
     for blk in blocks:
         by_file.setdefault(str(blk.file_path), []).append(blk)
 
-    # Structural pre-filter for large files (>14 symbols): keep exported & >=6-line functions, cap at 18 per file
+    wants_types = any(w in task_intent.lower() for w in ("type", "interface", "schema", "타입", "인터페이스", "스키마"))
     candidates_for_jev: List[CodeBlock] = []
     for f_key, f_blocks in by_file.items():
-        if len(f_blocks) > 14:
+        func_blocks = [b for b in f_blocks if b.kind in {"function", "method", "class", "doc_section"}]
+        pool = func_blocks if (func_blocks and not wants_types) else f_blocks
+        if len(pool) > 14:
             substantive = [
-                b for b in f_blocks
+                b for b in pool
                 if (b.end_line - b.start_line + 1) >= 6 or b.signature.startswith("export ")
             ]
             if not substantive:
-                substantive = f_blocks
+                substantive = pool
             substantive.sort(key=lambda b: _structural_priority(b, keywords), reverse=True)
             candidates_for_jev.extend(substantive[:32])
         else:
-            candidates_for_jev.extend(f_blocks)
+            candidates_for_jev.extend(pool)
 
     chunk_size = 24
     batches = [candidates_for_jev[i : i + chunk_size] for i in range(0, len(candidates_for_jev), chunk_size)]
@@ -246,13 +248,39 @@ def score_symbols(
             reverse=True,
         )
         above = [item for item in f_list if item[1] >= threshold]
+        selected_for_file: List[Tuple[CodeBlock, float]] = []
         if above:
             limit = max_per_file + 1 if len(above) >= 5 and above[4][1] >= 0.61 else max_per_file
-            filtered.extend(above[:limit])
+            selected_for_file = list(above[:limit])
         elif f_list:
-            best_blk, best_sc = f_list[0]
-            if best_sc >= threshold - 0.12:
-                filtered.append((best_blk, max(best_sc, threshold)))
+            # Keep the primary exported function (or top block) of every Stage-1 selected file
+            exported_funcs = [
+                item for item in f_list
+                if item[0].signature.startswith("export ") and item[0].kind in {"function", "method", "class"}
+            ]
+            if exported_funcs:
+                exported_funcs.sort(key=lambda x: (x[0].end_line - x[0].start_line, x[1]), reverse=True)
+                for blk_e, sc_e in exported_funcs[:2]:
+                    selected_for_file.append((blk_e, max(sc_e, threshold)))
+            elif f_list[0][1] >= threshold - 0.12:
+                selected_for_file.append((f_list[0][0], max(f_list[0][1], threshold)))
+
+        # Also ensure the main exported entrypoint function of a selected code file isn't omitted when internal helpers matched
+        if selected_for_file and not f_key.endswith(".md"):
+            main_exports = [
+                item for item in f_list
+                if item[0].signature.startswith("export ") and item[0].kind in {"function", "method", "class"}
+            ]
+            if main_exports:
+                main_exports.sort(key=lambda x: (x[0].end_line - x[0].start_line, x[1]), reverse=True)
+                primary_blk, primary_sc = main_exports[0]
+                if all(b.name != primary_blk.name for b, _ in selected_for_file):
+                    if len(selected_for_file) >= max_per_file + 1:
+                        selected_for_file[-1] = (primary_blk, max(primary_sc, threshold))
+                    else:
+                        selected_for_file.append((primary_blk, max(primary_sc, threshold)))
+
+        filtered.extend(selected_for_file)
 
     filtered.sort(key=lambda x: x[1], reverse=True)
     return filtered[:max_blocks]

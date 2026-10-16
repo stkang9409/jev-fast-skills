@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
 from .parser import CodeBlock
+from .enricher import build_enriched_metadata, promote_call_graph_neighbors
 
 
 def build_hint(
@@ -13,12 +14,21 @@ def build_hint(
     include_links: bool = False,
 ) -> str:
     """
-    Build a compact Index-Only Hint (1 line per file: `- rel/path: `sym1` L10-L45, `sym2` L50-L90`).
-    No bundle code body is emitted, keeping output within ~20-35 lines while preserving wide file recall.
+    Build a rich Structural Quick Index Hint:
+    - Per-file symbols + line ranges + callers (`[← file:Lline]`) + key literals/error codes
+    - Per-directory Module Map for remaining modules
+    - Entry Chains (IPC / API → Handler → Preload Bridge → UI)
+    - 1-Hop DB / Repository Links & SQL tables
     """
     root = repo_root.resolve()
+    scored_blocks = promote_call_graph_neighbors(root, dir_groups, scored_blocks)
+    enriched = build_enriched_metadata(root, dir_groups, scored_blocks)
+    sym_callers = enriched.get("symbol_callers", {})
+    file_literals = enriched.get("file_literals", {})
+    dir_module_maps = enriched.get("dir_module_maps", {})
+    entry_chains = enriched.get("entry_chains", [])
+    db_links = enriched.get("db_links", [])
 
-    # Group blocks by resolved file path, preserving max file score for ordering
     by_file: Dict[Path, List[Tuple[CodeBlock, float]]] = {}
     file_max_score: Dict[Path, float] = {}
     for blk, sc in scored_blocks:
@@ -32,50 +42,67 @@ def build_hint(
 
     def format_file_line(fp: Path, items: List[Tuple[CodeBlock, float]]) -> str:
         try:
-            rel_path = str(fp.relative_to(root))
+            rel_path = str(fp.relative_to(root)).replace(chr(92), "/")
         except ValueError:
             rel_path = str(fp)
-        syms_str = ", ".join(f"`{b.name}` L{b.start_line}-L{b.end_line}" for b, _ in items)
+        sym_parts = []
+        for b, _ in items:
+            callers = sym_callers.get((rel_path, b.name))
+            caller_tag = f" [← {', '.join(callers)}]" if callers else ""
+            sym_parts.append(f"`{b.name}` L{b.start_line}-L{b.end_line}{caller_tag}")
+        syms_str = ", ".join(sym_parts)
+        lit_tag = f" {file_literals[rel_path]}" if rel_path in file_literals else ""
         if include_links:
-            return f"- [{rel_path}](file://{fp}): {syms_str}"
-        return f"- {rel_path}: {syms_str}"
+            return f"- [{rel_path}](file://{fp}): {syms_str}{lit_tag}"
+        return f"- {rel_path}: {syms_str}{lit_tag}"
+
+    out_lines: List[str] = []
 
     if not dir_groups:
         sorted_files = sorted(by_file.keys(), key=lambda p: file_max_score[p], reverse=True)
-        return "\n".join(format_file_line(fp, by_file[fp]) for fp in sorted_files)
-
-    # Assign each file to the MOST specific matching directory group (longest path prefix)
-    resolved_groups = [(label, gpath.resolve()) for label, gpath in dir_groups]
-    group_buckets: Dict[str, List[Path]] = {label: [] for label, _ in resolved_groups}
-    unassigned: List[Path] = []
-
-    for fp in sorted(by_file.keys(), key=lambda p: file_max_score[p], reverse=True):
-        best_label = None
-        best_depth = -1
-        for label, gpath in resolved_groups:
-            if fp == gpath or gpath in fp.parents:
-                depth = len(gpath.parts)
-                if depth > best_depth:
-                    best_depth = depth
-                    best_label = label
-        if best_label is not None:
-            group_buckets[best_label].append(fp)
-        else:
-            unassigned.append(fp)
-
-    out_lines: List[str] = []
-    for label, _ in resolved_groups:
-        fps = group_buckets.get(label, [])
-        if not fps:
-            continue
-        out_lines.append(f"## {label}")
-        for fp in fps:
+        for fp in sorted_files:
             out_lines.append(format_file_line(fp, by_file[fp]))
+    else:
+        resolved_groups = [(label, gpath.resolve()) for label, gpath in dir_groups]
+        group_buckets: Dict[str, List[Path]] = {label: [] for label, _ in resolved_groups}
+        unassigned: List[Path] = []
 
-    if unassigned:
-        out_lines.append("## other")
-        for fp in unassigned:
-            out_lines.append(format_file_line(fp, by_file[fp]))
+        for fp in sorted(by_file.keys(), key=lambda p: file_max_score[p], reverse=True):
+            best_label = None
+            best_depth = -1
+            for label, gpath in resolved_groups:
+                if fp == gpath or gpath in fp.parents:
+                    depth = len(gpath.parts)
+                    if depth > best_depth:
+                        best_depth = depth
+                        best_label = label
+            if best_label is not None:
+                group_buckets[best_label].append(fp)
+            else:
+                unassigned.append(fp)
+
+        for label, _ in resolved_groups:
+            fps = group_buckets.get(label, [])
+            if not fps and label not in dir_module_maps:
+                continue
+            out_lines.append(f"## {label}")
+            for fp in fps:
+                out_lines.append(format_file_line(fp, by_file[fp]))
+            if label in dir_module_maps:
+                out_lines.append(dir_module_maps[label])
+
+        if unassigned:
+            out_lines.append("## other")
+            for fp in unassigned:
+                out_lines.append(format_file_line(fp, by_file[fp]))
+
+    if entry_chains:
+        out_lines.append("## Entry Chains (IPC / API → Handler → Bridge → UI)")
+        out_lines.extend(entry_chains)
+
+    if db_links:
+        out_lines.append("## DB / Repository Links")
+        out_lines.extend(db_links)
 
     return "\n".join(out_lines)
 

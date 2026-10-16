@@ -17,7 +17,7 @@ except Exception:
     _SHM_AVAILABLE = False
 
 CACHE_STATS = {"hits": 0, "misses": 0}
-PARSER_VERSION = "v10"
+PARSER_VERSION = "v11"
 
 SQL_EXTRACT_RE = re.compile(
     r"\b(?:INSERT\s+INTO|UPDATE|FROM|JOIN)\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)\b",
@@ -290,7 +290,7 @@ _STRING_COMMENT_RE = re.compile(
 )
 
 
-def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500) -> int:
+def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 1500) -> int:
     """
     Find the exact closing line of a JS/TS/CJS function, method, or component.
     Ignores braces inside parameter lists `({ ... })` and string/comment literals.
@@ -342,7 +342,7 @@ def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500)
         if not body_opened and paren_depth == 0 and clean.rstrip().endswith(";") and idx >= start_line - 1:
             return idx + 1
 
-    return min(len(lines), start_line + 45)
+    return limit if body_opened else min(len(lines), start_line + 45)
 
 
 def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeBlock]:
@@ -350,6 +350,11 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
     blocks: List[CodeBlock] = []
     seen_starts = set()
     total_lines = len(lines)
+
+    cjs_exported: set = set()
+    for m_exp in re.finditer(r"module\.exports\s*=\s*\{([^}]+)\}", raw_text):
+        for tok in re.findall(r"\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b", m_exp.group(1)):
+            cjs_exported.add(tok)
 
     decl_pattern = re.compile(
         r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function|class|interface|type)\s+([a-zA-Z0-9_$]+)"
@@ -364,7 +369,7 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
         if start_line in seen_starts:
             continue
         match_str = match.group(0)
-        is_exported = match_str.lstrip().startswith(("export", "module.exports", "exports."))
+        is_exported = match_str.lstrip().startswith(("export", "module.exports", "exports.")) or ( (match.group(2) or match.group(4) or match.group(5) or match.group(6)) in cjs_exported )
         kw = match.group(1) or match.group(3) or ("method" if match.group(6) else "function")
         name = match.group(2) or match.group(4) or match.group(5) or match.group(6)
         if not name or name in {"if", "for", "while", "switch", "catch", "return", "constructor"}:
