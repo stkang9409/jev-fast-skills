@@ -113,12 +113,10 @@ def main():
     # Automatically include docs/features and docs/manual if scanning subdirectories of a repo with docs/
     auto_doc_dirs: List[Path] = []
     if not args.no_docs and repo_root.is_dir():
-        for doc_sub in ("docs/features", "docs/manual"):
-            dp = (repo_root / doc_sub).resolve()
-            if dp.is_dir() and not any(dp == gp or gp in dp.parents for _, gp in dir_groups):
-                auto_doc_dirs.append(dp)
-        if auto_doc_dirs:
-            dir_groups.append(("docs", (repo_root / "docs").resolve()))
+        dp = (repo_root / "docs").resolve()
+        if dp.is_dir() and not any(dp == gp or gp in dp.parents for _, gp in dir_groups):
+            auto_doc_dirs.append(dp)
+            dir_groups.append(("docs", dp))
 
     # Stage 0: Scan each target directory with fair per-directory candidate quota and child-dir exclusion
     all_candidate_files: List[Path] = []
@@ -132,7 +130,7 @@ def main():
         reverse=True,
     )
 
-    per_dir_quota = max(14, 36 // max(1, len(ordered_scan_dirs)))
+    per_dir_quota = max(60, 140 // max(1, len(ordered_scan_dirs)))
     for label, rp in ordered_scan_dirs:
         child_dirs = {other_p for _, other_p in ordered_scan_dirs if other_p != rp and rp in other_p.parents}
         d_files = get_repo_files(
@@ -163,13 +161,9 @@ def main():
             doc_files,
             repo_root,
             task_intent=args.task_intent,
-            max_candidates=3,
+            max_candidates=16,
         )
-        for k, v in doc_summaries.items():
-            # Only include docs that have strong lexical keyword hits (>= 5 hits)
-            m_hit = re.search(r"KeywordHits\((\d+)\)", v)
-            if m_hit and int(m_hit.group(1)) >= 5:
-                combined_summaries[k] = v
+        combined_summaries.update(doc_summaries)
 
     if not combined_summaries:
         print(f"[fast-context] No valid source files found in {repo_root}", file=sys.stderr)

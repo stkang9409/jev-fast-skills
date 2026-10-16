@@ -1,4 +1,4 @@
-"""Fast repository file scanner with Stage 0 bilingual IDF pre-filtering and SQL/method extraction."""
+"""Fast repository file scanner with domain-agnostic structural & header summarization."""
 
 import os
 import re
@@ -37,59 +37,22 @@ IGNORE_DIRS: Set[str] = {
     "__snapshots__",
     "snapshots",
     "migrations",
+    "verification",
 }
 
 CODE_EXTENSIONS: Set[str] = {
-    ".py",
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-    ".mjs",
-    ".cjs",
-    ".cts",
-    ".mts",
-    ".go",
-    ".rs",
-    ".java",
-    ".kt",
-    ".swift",
-    ".c",
-    ".cpp",
-    ".h",
-    ".hpp",
-    ".rb",
-    ".php",
-    ".cs",
-    ".sh",
-    ".sql",
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".cts", ".mts",
+    ".go", ".rs", ".java", ".kt", ".swift", ".c", ".cpp", ".h", ".hpp",
+    ".rb", ".php", ".cs", ".sh", ".sql",
 }
 
-DOC_EXTENSIONS: Set[str] = {
-    ".md",
-}
+DOC_EXTENSIONS: Set[str] = {".md"}
 
 TEST_PATTERNS = re.compile(
     r"(?:^|/)(?:tests?|__tests__|specs?|e2e|cypress|playwright)(?:/|$)"
     r"|\.(?:test|spec|e2e)\.[a-z0-9]+$",
     re.IGNORECASE,
 )
-
-# Bilingual domain synonym dictionary so Korean intents match English symbol/file/SQL names and vice versa
-# High-specificity bilingual domain compound mapping (never generic JS verbs like create/read/load/check)
-KO_EN_SYNONYMS: Dict[str, List[str]] = {
-    "인계": ["handoff", "ddmd-handoff"],
-    "야간": ["nightsurcharge", "nightdetails", "js010"],
-    "야간가산": ["nightsurcharge", "assertnightsurchargetimes", "js010"],
-    "사용장려비": ["usageincentive", "assertusageincentiveprices", "js002"],
-    "사용장려금": ["usageincentive", "assertusageincentiveprices", "js002"],
-    "사전점검": ["preflight", "catalog-evidence"],
-    "결과": ["hira-result", "hiraresult", "hira_result_file"],
-    "가져오기": ["importddmdresultfiles", "hira-result-files"],
-    "운영": ["operational-claim", "operation-sam", "batch-sam"],
-    "노쇼": ["noshow", "no-show"],
-    "폴링": ["polling"],
-}
 
 STOPWORDS: Set[str] = {
     "the", "and", "for", "with", "from", "that", "this", "what", "where", "when",
@@ -107,13 +70,16 @@ SYMBOL_RE = re.compile(
 )
 
 SQL_TABLE_RE = re.compile(
-    r"(?:INSERT\s+INTO|UPDATE|FROM|JOIN)\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)",
+    r"\b(?:INSERT\s+INTO|UPDATE|FROM|JOIN)\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)\b",
     re.IGNORECASE,
 )
 
 
 def extract_intent_keywords(task_intent: str) -> List[str]:
-    """Extract clean search tokens from task_intent and expand with bilingual synonyms."""
+    """
+    Domain-agnostic tokenizer: extracts alphanumeric/CJK tokens and splits
+    4+ character Korean compound nouns into 2-character sub-tokens for spacing tolerance.
+    """
     raw_tokens = re.findall(r"[a-zA-Z0-9_가-힣.-]{2,}", task_intent.lower())
     seen: Set[str] = set()
     keywords: List[str] = []
@@ -127,16 +93,9 @@ def extract_intent_keywords(task_intent: str) -> List[str]:
         add_kw(t)
         for sub in re.split(r"[-_./]", t):
             add_kw(sub)
-        # Bilingual expansion
-        if t in KO_EN_SYNONYMS:
-            for syn in KO_EN_SYNONYMS[t]:
-                add_kw(syn.lower())
-        else:
-            for ko_key, syns in KO_EN_SYNONYMS.items():
-                if len(ko_key) >= 2 and ko_key in t:
-                    add_kw(ko_key)
-                    for syn in syns:
-                        add_kw(syn.lower())
+        if re.fullmatch(r"[가-힣]{4,}", t):
+            add_kw(t[:2])
+            add_kw(t[2:])
     return keywords
 
 
@@ -234,11 +193,11 @@ def get_file_summaries(
     files: List[Path],
     base_dir: Path,
     task_intent: str = "",
-    max_candidates: int = 32,
+    max_candidates: int = 140,
 ) -> Dict[str, str]:
     """
-    Generate compact file summaries and perform Stage 0 fast lexical pre-filtering.
-    Extracts top-matching functions, class methods, IPC channels, and SQL tables.
+    Generate compact, domain-agnostic file summaries (Doc + Symbols + SQL + Snippets)
+    without echoing query keywords into the summary text.
     """
     root = base_dir.resolve()
     keywords = extract_intent_keywords(task_intent) if task_intent else []
@@ -263,34 +222,45 @@ def get_file_summaries(
         raw_lower = raw_head.lower()
 
         lex_score = 0.0
-        matched_kws: List[str] = []
         if keywords:
             for kw in keywords:
-                in_path = kw in rel_lower
-                in_body = kw in raw_lower
-                if in_path:
-                    lex_score += 3.5
-                    matched_kws.append(kw)
-                elif in_body:
-                    lex_score += 1.2
-                    matched_kws.append(kw)
+                if kw in rel_lower:
+                    lex_score += 3.0
+                elif kw in raw_lower:
+                    lex_score += 1.0
 
-        # Extract symbols and rank them by relevance to keywords + length (avoiding tiny top-of-file helpers)
+        # Extract top-of-file header comments / module docstring (first 25 lines)
+        header_comments: List[str] = []
+        for line in raw_head.splitlines()[:25]:
+            s = line.strip()
+            if s.startswith(("//", "/*", "*", "#")):
+                c = re.sub(r"^[/\*#\s]+|[\*/\s]+$", "", s).strip()
+                if len(c) >= 4 and not c.startswith(("use strict", "eslint", "@ts-")):
+                    header_comments.append(c)
+                    if len(" ".join(header_comments)) >= 140:
+                        break
+
+        # Extract symbols: prioritize exported symbols, query-matching symbols, and bottom-of-file main entrypoints
+        all_matches = list(SYMBOL_RE.finditer(raw_head))
+        total_m = max(1, len(all_matches))
         raw_syms = []
         seen_s: Set[str] = set()
-        for m in SYMBOL_RE.finditer(raw_head):
+        for idx_m, m in enumerate(all_matches):
             sym = next((g for g in m.groups() if g), None)
-            if sym and sym not in seen_s and sym not in {"if", "for", "while", "switch", "catch", "function", "return"}:
-                seen_s.add(sym)
-                s_low = sym.lower()
-                s_hits = sum(2.0 for kw in keywords if kw in s_low)
-                # Prefer descriptive symbols over tiny 3-char helpers
-                raw_syms.append((s_hits + min(len(sym), 25) * 0.05, sym))
+            if not sym or sym in seen_s or sym in {"if", "for", "while", "switch", "catch", "function", "return"}:
+                continue
+            seen_s.add(sym)
+            match_text = m.group(0)
+            is_exp = match_text.lstrip().startswith(("export", "module.exports", "exports."))
+            s_low = sym.lower()
+            s_hits = sum(2.5 for kw in keywords if kw in s_low)
+            pos_bonus = (idx_m / total_m) * 0.8
+            exp_bonus = 1.5 if is_exp else 0.0
+            raw_syms.append((s_hits + exp_bonus + pos_bonus + min(len(sym), 25) * 0.03, sym))
 
         raw_syms.sort(key=lambda x: x[0], reverse=True)
-        syms = [s for _, s in raw_syms[:14]]
+        syms = [s for _, s in raw_syms[:10]]
 
-        # Also extract SQL table names if present (e.g. claim.runtime_claim_hira_result_files)
         sql_tables = []
         seen_t: Set[str] = set()
         for m in SQL_TABLE_RE.finditer(raw_head):
@@ -298,41 +268,48 @@ def get_file_summaries(
             if tbl not in seen_t:
                 seen_t.add(tbl)
                 sql_tables.append(tbl)
-                t_low = tbl.lower()
-                if any(kw in t_low for kw in keywords):
-                    lex_score += 2.5
+                if any(kw in tbl.lower() for kw in keywords):
+                    lex_score += 2.0
 
-        lines_out = []
-        for line in raw_head.splitlines():
-            s = line.strip()
-            if s and not s.startswith(("//", "/*", "*", "import ", "from ")):
-                lines_out.append(s[:90])
-                if len(lines_out) >= 4:
-                    break
+        matched_snippets = []
+        if keywords:
+            line_candidates = []
+            for line in raw_head.splitlines():
+                s = line.strip()
+                if len(s) < 6 or s.startswith(("import ", "from ")):
+                    continue
+                s_low = s.lower()
+                l_hits = sum(1 for kw in keywords if kw in s_low)
+                if l_hits > 0:
+                    line_candidates.append((l_hits, s[:85]))
+            line_candidates.sort(key=lambda x: x[0], reverse=True)
+            for _, snip in line_candidates[:2]:
+                if snip not in matched_snippets:
+                    matched_snippets.append(snip)
 
         parts = []
-        if matched_kws:
-            parts.append(f"KeywordHits({len(matched_kws)}): {', '.join(matched_kws[:8])}")
+        if header_comments:
+            parts.append("Doc: " + " ".join(header_comments)[:140])
         if syms:
-            parts.append(f"Symbols: {', '.join(syms[:12])}")
+            parts.append("Symbols: " + ", ".join(syms[:10]))
         if sql_tables:
-            parts.append(f"SQLTables: {', '.join(sql_tables[:6])}")
-        if lines_out:
-            parts.append(" | ".join(lines_out[:3]))
+            parts.append("SQL: " + ", ".join(sql_tables[:4]))
+        if matched_snippets:
+            parts.append("Snippets: " + " | ".join(matched_snippets))
 
-        summary_str = " ; ".join(parts)[:300]
+        summary_str = " ; ".join(parts)[:280]
         scored_entries.append((lex_score, is_doc, rel_path, summary_str))
 
+    scored_entries.sort(key=lambda x: x[0], reverse=True)
     if len(scored_entries) <= max_candidates or not keywords:
         return {rel: summ for _, _, rel, summ in scored_entries}
 
     docs = [e for e in scored_entries if e[1] and e[0] > 0]
     codes = [e for e in scored_entries if not e[1]]
+    if not codes:
+        return {rel: summ for _, _, rel, summ in docs[:max_candidates]}
 
-    docs.sort(key=lambda x: x[0], reverse=True)
-    codes.sort(key=lambda x: x[0], reverse=True)
-
-    selected_docs = docs[:5]
+    selected_docs = docs[:6]
     remaining_slots = max(1, max_candidates - len(selected_docs))
     selected_codes = codes[:remaining_slots]
 

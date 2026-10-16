@@ -1,4 +1,4 @@
-"""AST and signature parser for code slicing with RAM SharedMemory AST Cache and JSDoc/SQL/Error extraction."""
+"""AST and signature parser for code slicing with RAM SharedMemory AST Cache and structural summaries."""
 
 import ast
 import re
@@ -17,20 +17,12 @@ except Exception:
     _SHM_AVAILABLE = False
 
 CACHE_STATS = {"hits": 0, "misses": 0}
-PARSER_VERSION = "v7"
-
-TRIVIAL_HELPER_NAMES = {
-    "fail", "unique", "aad", "invalid", "withoutReceipts", "sameProfile",
-    "identity", "text", "integer", "realDate", "samAn", "samN", "samDecimal",
-    "Snapshot", "Statement", "field", "table",
-}
+PARSER_VERSION = "v10"
 
 SQL_EXTRACT_RE = re.compile(
     r"\b(?:INSERT\s+INTO|UPDATE|FROM|JOIN)\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+)\b",
     re.IGNORECASE,
 )
-ERR_CODE_RE = re.compile(r"\b([A-Z][A-Z0-9_]{5,})\b")
-KO_PHRASE_RE = re.compile(r"[가-힣]{2,}(?:\s+[가-힣0-9A-Za-z_-]+){0,3}")
 
 
 class CodeBlock:
@@ -107,44 +99,39 @@ def _extract_leading_comments(lines: List[str], start_line: int, max_lookback: i
         else:
             break
     comment_parts.reverse()
-    return " ".join(comment_parts)[:150]
+    return " ".join(comment_parts)[:160]
 
 
 def _build_rich_summary(lines: List[str], start_line: int, content: str) -> str:
-    """Build a high-signal summary combining preceding JSDoc comments, SQL tables, error codes, and Korean domain terms."""
+    """Build a domain-agnostic summary from leading comments, inline comments, SQL tables, and signature."""
     lead_doc = _extract_leading_comments(lines, start_line)
+
     sql_tables = []
     for m in SQL_EXTRACT_RE.finditer(content):
         t = m.group(1)
         if t not in sql_tables:
             sql_tables.append(t)
 
-    err_codes = []
-    for m in ERR_CODE_RE.finditer(content):
-        c = m.group(1)
-        if ("_" in c) and c not in err_codes and not c.startswith(("SELECT_", "INSERT_", "UPDATE_")):
-            err_codes.append(c)
-
-    ko_terms = []
-    for m in KO_PHRASE_RE.finditer(content):
-        kp = m.group(0)
-        if kp not in ko_terms:
-            ko_terms.append(kp)
-            if len(ko_terms) >= 6:
-                break
+    inline_comments = []
+    for line in content.splitlines()[1:]:
+        s = line.strip()
+        if s.startswith("//"):
+            c = s.lstrip("/ ").strip()
+            if c and c not in inline_comments:
+                inline_comments.append(c[:80])
+                if len(inline_comments) >= 2:
+                    break
 
     parts = []
-    if sql_tables:
-        parts.append(f"SQL: {', '.join(sql_tables[:4])}")
-    if err_codes:
-        parts.append(f"Codes: {', '.join(err_codes[:4])}")
-    if ko_terms:
-        parts.append(f"Terms: {', '.join(ko_terms[:5])}")
     if lead_doc:
         parts.append(f"Doc: {lead_doc}")
+    if inline_comments:
+        parts.append("Note: " + " ; ".join(inline_comments))
+    if sql_tables:
+        parts.append(f"SQL: {', '.join(sql_tables[:4])}")
 
     sig_line = content.strip().splitlines()[0] if content.strip() else ""
-    parts.append(sig_line[:90])
+    parts.append(sig_line[:95])
     return " | ".join(parts)[:280]
 
 
@@ -250,7 +237,7 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
                     end_line=e_line,
                     signature=sig_line,
                     content=content,
-                    summary=doc.strip()[:140] if doc else _build_rich_summary(lines, s_line, content),
+                    summary=doc.strip()[:160] if doc else _build_rich_summary(lines, s_line, content),
                 )
             )
         elif isinstance(node, ast.ClassDef):
@@ -275,7 +262,7 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
                             end_line=m_e_line,
                             signature=m_sig,
                             content=m_content,
-                            summary=m_doc.strip()[:140] if m_doc else _build_rich_summary(lines, m_s_line, m_content),
+                            summary=m_doc.strip()[:160] if m_doc else _build_rich_summary(lines, m_s_line, m_content),
                         )
                     )
             if not method_found or (c_e_line - c_s_line) < 40:
@@ -289,7 +276,7 @@ def _parse_python(file_path: Path, raw_text: str, lines: List[str]) -> List[Code
                         end_line=c_e_line,
                         signature=f"class {node.name}",
                         content=c_content,
-                        summary=c_doc.strip()[:140] if c_doc else _build_rich_summary(lines, c_s_line, c_content),
+                        summary=c_doc.strip()[:160] if c_doc else _build_rich_summary(lines, c_s_line, c_content),
                     )
                 )
 
@@ -306,8 +293,7 @@ _STRING_COMMENT_RE = re.compile(
 def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500) -> int:
     """
     Find the exact closing line of a JS/TS/CJS function, method, or component.
-    Properly ignores braces inside parameter lists `({ ... })`, TypeScript return type annotations,
-    and string/comment literals so `L70-L70` never happens.
+    Ignores braces inside parameter lists `({ ... })` and string/comment literals.
     """
     brace_depth = 0
     paren_depth = 0
@@ -337,7 +323,6 @@ def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500)
                     params_closed = True
             elif ch == "{":
                 if is_func_like and not params_closed:
-                    # Inside parameter destructuring or inline param type annotation `({ a }: { a: string })`
                     continue
                 brace_depth += 1
                 if paren_depth == 0:
@@ -348,7 +333,6 @@ def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500)
                 brace_depth = max(0, brace_depth - 1)
 
         if body_opened and brace_depth == 0 and paren_depth == 0:
-            # Guard against TS inline return type `: { ok: boolean } {` where body opens on next token/line
             rest_of_line = clean.rstrip()
             if rest_of_line.endswith("=>"):
                 body_opened = False
@@ -362,7 +346,7 @@ def _find_brace_end_line(lines: List[str], start_line: int, max_span: int = 500)
 
 
 def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeBlock]:
-    """Parse ESModule, TypeScript, CommonJS (.cjs), Class Methods, and Electron IPC/Preload symbols."""
+    """Parse ESModule, TypeScript, CommonJS (.cjs), Class Methods, and IPC/RPC handlers using purely structural rules."""
     blocks: List[CodeBlock] = []
     seen_starts = set()
     total_lines = len(lines)
@@ -379,6 +363,8 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
         start_line = raw_text[:match.start()].count("\n") + 1
         if start_line in seen_starts:
             continue
+        match_str = match.group(0)
+        is_exported = match_str.lstrip().startswith(("export", "module.exports", "exports."))
         kw = match.group(1) or match.group(3) or ("method" if match.group(6) else "function")
         name = match.group(2) or match.group(4) or match.group(5) or match.group(6)
         if not name or name in {"if", "for", "while", "switch", "catch", "return", "constructor"}:
@@ -387,20 +373,16 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
         end_line = _find_brace_end_line(lines, start_line)
         span = end_line - start_line + 1
 
-        # Skip tiny 1-5 line boilerplate helpers in medium/large files so they don't pollute Quick Index
-        if total_lines > 60 and (
-            (name in TRIVIAL_HELPER_NAMES and span <= 18)
-            or (span <= 3 and kw in {"function", "const", "let", "type"})
-        ):
+        # Structural filter: in large files (>80 lines), skip non-exported 1-3 line one-liner helpers
+        if total_lines > 80 and not is_exported and span <= 3:
             continue
-
-        # For class declarations that contain parsed methods, skip the outer class wrapper if huge
         if kw == "class" and total_lines > 120:
             continue
 
         full_block_text = "".join(lines[start_line - 1 : end_line])
         content_preview = "".join(lines[start_line - 1 : min(end_line, start_line + 75)])
         kind = "class" if kw == "class" else ("type" if kw in {"interface", "type"} else ("method" if kw == "method" else "function"))
+        sig_prefix = "export " if is_exported else ""
         blocks.append(
             CodeBlock(
                 file_path=file_path,
@@ -408,7 +390,7 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
                 kind=kind,
                 start_line=start_line,
                 end_line=end_line,
-                signature=f"{kw} {name}",
+                signature=f"{sig_prefix}{kw} {name}",
                 content=content_preview,
                 summary=_build_rich_summary(lines, start_line, full_block_text),
             )
@@ -448,7 +430,7 @@ def _parse_js_ts(file_path: Path, raw_text: str, lines: List[str]) -> List[CodeB
 
 
 def _parse_markdown(file_path: Path, lines: List[str]) -> List[CodeBlock]:
-    """Parse Markdown manuals/docs by heading sections (#, ##, ###)."""
+    """Parse Markdown docs by heading sections (#, ##, ###), filtering out tiny 1-4 line frontmatter sections."""
     blocks: List[CodeBlock] = []
     heading_indices = []
     for idx, line in enumerate(lines):
@@ -459,13 +441,15 @@ def _parse_markdown(file_path: Path, lines: List[str]) -> List[CodeBlock]:
     if not heading_indices:
         return _parse_generic(file_path, "".join(lines), lines)
 
-    SKIP_HEADINGS = {"문서 상태", "범위", "완료 기준", "권한·감사·안전", "책임"}
+    total_sections = len(heading_indices)
     for i, (start_line, title) in enumerate(heading_indices):
-        if title.strip() in SKIP_HEADINGS:
-            continue
-        next_start = heading_indices[i + 1][0] - 1 if i + 1 < len(heading_indices) else len(lines)
+        next_start = heading_indices[i + 1][0] - 1 if i + 1 < total_sections else len(lines)
         end_line = max(start_line, next_start)
+        span = end_line - start_line + 1
         content = "".join(lines[start_line - 1 : min(end_line, start_line + 65)])
+        # Structural filter: in multi-section docs, skip empty/tiny metadata sections (<= 6 lines and < 140 chars)
+        if total_sections > 4 and span <= 7 and len(content.strip()) < 140:
+            continue
         blocks.append(
             CodeBlock(
                 file_path=file_path,
@@ -478,7 +462,7 @@ def _parse_markdown(file_path: Path, lines: List[str]) -> List[CodeBlock]:
                 summary=content.strip()[:220].replace("\n", " "),
             )
         )
-    return blocks
+    return blocks if blocks else _parse_generic(file_path, "".join(lines), lines)
 
 
 def _parse_generic(file_path: Path, raw_text: str, lines: List[str], chunk_size: int = 50) -> List[CodeBlock]:
