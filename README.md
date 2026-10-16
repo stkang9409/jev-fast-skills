@@ -8,11 +8,9 @@
 
 | 구분 | 이름 | 속도 | 역할 및 핵심 효과 |
 | :--- | :--- | :---: | :--- |
-| **Skill 1** | `fast-context` | **~1.3s** | 2단계(파일 $
-ightarrow$ 심볼) 시맨틱 컨텍스트 번들러. 다중 파일 탐색 시 도구 호출 -76.5%, 누적 토큰 -76.1%, 소요 시간 -39.8% 단축 |
+| **Skill 1** | `fast-context` | **~1.3s** | 2단계(파일 → 심볼) 시맨틱 컨텍스트 번들러. 다중 파일 탐색 시 도구 호출 -76.5%, 누적 토큰 -76.1%, 소요 시간 -39.8% 단축 |
 | **Skill 2** | `fast-memory` | **~0.3ms** | POSIX `SharedMemory` + `fcntl.flock` 기반 16MB RAM 워킹 메모리. 디스크 임시 파일(`scratch/`, `/tmp/`) 생성 0건 보장 |
-| **Skill 3** | `fast-browser` | **~200ms/step** | TypeSafe Jev 초고속 브라우저 탐색·슬롯 입력 및 자유 서술형 텍스트 핸드오프(`NEED_TEXT` $
-ightarrow$ `--resume`) |
+| **Skill 3** | `fast-browser` | **~200ms/step** | TypeSafe Jev 초고속 브라우저 탐색·슬롯 입력 및 자유 서술형 텍스트 핸드오프(`NEED_TEXT` → `--resume`) |
 | **Skill 4** | `prompt-engineer` | **~220ms** | Anthropic/OpenAI/Google 가이드 기반 **12대 직교 프롬프트 품질 기준 + 라인별 과적합 감사기** |
 | **Rule** | `rules/AGENTS.md` / `CLAUDE.md` | **0ms (Zero-Turn)** | 별도 라우터 호출 없이 Turn 1에 즉시 스킬을 실행하는 **Zero-Turn Fast Skill Policy** |
 | **Hook** | `hooks.json` (`Stop`) | **~1.0ms** | 작업 완료 시 `fast-memory` POSIX 공유 메모리를 자동 회수하고 즉시 종료 |
